@@ -29,7 +29,9 @@ jobs:
           enable-cache: true
 
       - name: Install Dependencies
-        run: uv sync --locked
+        run: |
+          uv lock
+          uv sync
 
       - name: Run Axiom Node (5 Hour Session)
         run: |
