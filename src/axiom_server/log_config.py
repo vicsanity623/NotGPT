@@ -174,6 +174,9 @@ def configure_logging(
         ("filelock", logging.WARNING),
         ("huggingface_hub", logging.WARNING),
         ("spacy", logging.WARNING),
+        ("crucible", logging.WARNING),
+        ("axiom-node.hasher", logging.WARNING),
+        ("axiom_server.discovery_rss", logging.WARNING),
     ]
     for name, lvl in _SILENCE:
         logging.getLogger(name).setLevel(lvl)

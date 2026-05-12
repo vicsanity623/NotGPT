@@ -348,7 +348,7 @@ class AxiomNode(P2PBaseNode):
                         )
 
                         if not content_list:
-                            background_thread_logger.info(
+                            background_thread_logger.debug(
                                 "No new content found. Proceeding to verification phase.",
                             )
                         else:
@@ -431,11 +431,11 @@ class AxiomNode(P2PBaseNode):
                             .all()
                         )
                         if not facts_to_verify:
-                            background_thread_logger.info(
+                            background_thread_logger.debug(
                                 "No new facts to verify.",
                             )
                         else:
-                            background_thread_logger.info(
+                            background_thread_logger.debug(
                                 f"Found {len(facts_to_verify)} facts to verify.",
                             )
                             for fact in facts_to_verify:
@@ -445,7 +445,7 @@ class AxiomNode(P2PBaseNode):
                                 )
                                 if len(claims) >= CORROBORATION_THRESHOLD:
                                     fact.status = "corroborated"
-                                    background_thread_logger.info(
+                                    background_thread_logger.debug(
                                         f"Fact '{fact.hash[:8]}' has been corroborated with {len(claims)} pieces of evidence.",
                                     )
                                     fact.score += 10
