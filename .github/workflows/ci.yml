@@ -20,38 +20,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Missing libxml2 for 3.9 and 3.13
         python: ['3.10', '3.11', '3.12']
-        arch: ['x64']  # 'x86'  # Missing libxml2 for x86
-    continue-on-error: >-
-      ${{
-        (
-          endsWith(matrix.python, '-dev')
-          || endsWith(matrix.python, '-nightly')
-        )
-        && true
-        || false
-      }}
+        arch: ['x64']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Setup python
         uses: actions/setup-python@v5
         with:
-          # This allows the matrix to specify just the major.minor version while still
-          # expanding it to get the latest patch version including alpha releases.
-          # This avoids the need to update for each new alpha, beta, release candidate,
-          # and then finally an actual release version.  actions/setup-python doesn't
-          # support this for PyPy presently so we get no help there.
-          #
-          # 'CPython' -> '3.9.0-alpha - 3.9.X'
-          # 'PyPy'    -> 'pypy-3.9'
-          python-version: ${{ fromJSON(format('["{0}", "{1}"]', format('{0}.0-alpha - {0}.X', matrix.python), matrix.python))[startsWith(matrix.python, 'pypy')] }}
+          python-version: ${{ matrix.python }}
           architecture: '${{ matrix.arch }}'
-          cache: pip
-          cache-dependency-path: test-requirements.txt
       - name: Run tests
         run: ./ci.sh
         shell: bash
@@ -66,36 +46,26 @@ jobs:
         python: ['3.10', '3.11', '3.12', '3.13']
         check_formatting: ['0']
         extra_name: ['']
-    continue-on-error: >-
-      ${{
-        (
-          endsWith(matrix.python, '-dev')
-          || endsWith(matrix.python, '-nightly')
-        )
-        && true
-        || false
-      }}
     steps:
       - name: Checkout
-        with:
-          persist-credentials: false
         uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: Setup python
         uses: actions/setup-python@v5
-        if: "!endsWith(matrix.python, '-dev')"
         with:
-          python-version: ${{ fromJSON(format('["{0}", "{1}"]', format('{0}.0-alpha - {0}.X', matrix.python), matrix.python))[startsWith(matrix.python, 'pypy')] }}
-          cache: pip
-          cache-dependency-path: test-requirements.txt
-      - name: Setup python (dev)
-        uses: deadsnakes/action@v2.0.2
-        if: endsWith(matrix.python, '-dev')
-        with:
-          python-version: '${{ matrix.python }}'
+          python-version: ${{ matrix.python }}
       - name: Run tests
-        run: ./ci.sh
+        # We add --frozen to prevent uv from trying to re-resolve the lockfile
+        # We use uv pip install if the ci.sh script is failing at 'uv add'
+        run: |
+          uv pip install .
+          ./ci.sh
         env:
           CHECK_FORMATTING: '${{ matrix.check_formatting }}'
+          UV_SYSTEM_PYTHON: 1 
 
   macOS:
     name: 'macOS (${{ matrix.python }})'
@@ -104,42 +74,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
-    continue-on-error: >-
-      ${{
-        (
-          endsWith(matrix.python, '-dev')
-          || endsWith(matrix.python, '-nightly')
-        )
-        && true
-        || false
-      }}
+        python: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Setup python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ fromJSON(format('["{0}", "{1}"]', format('{0}.0-alpha - {0}.X', matrix.python), matrix.python))[startsWith(matrix.python, 'pypy')] }}
-          cache: pip
-          cache-dependency-path: test-requirements.txt
+          python-version: ${{ matrix.python }}
       - name: Run tests
         run: ./ci.sh
 
-  # https://github.com/marketplace/actions/alls-green#why
-  check:  # This job does nothing and is only used for the branch protection
-
+  check:
     if: always()
-
-    needs:
-      - Windows
-      - Ubuntu
-      - macOS
-
+    needs: [Windows, Ubuntu, macOS]
     runs-on: ubuntu-latest
-
     steps:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@release/v1

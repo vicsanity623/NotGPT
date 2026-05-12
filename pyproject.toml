@@ -11,7 +11,7 @@ authors = [
 description = "Decentralized AI network that autonomously discovers, verifies, and archives objective truth"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.14"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
