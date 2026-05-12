@@ -10,7 +10,6 @@ from __future__ import annotations
 # Copyright (C) 2025 The Axiom Contributors
 # This program is licensed under the Peer Production License (PPL).
 # See the LICENSE file for full details.
-
 import logging
 import sys
 
@@ -76,7 +75,7 @@ class _AxiomFormatter(logging.Formatter):
     # The timestamp is printed in dim white so it doesn't dominate.
     _TS_FMT = "%Y-%m-%d %H:%M:%S"
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D102
+    def format(self, record: logging.LogRecord) -> str:
         level_colour, level_label = _LEVEL_STYLES.get(
             record.levelno,
             (_FG_WHITE, f"{record.levelno:5d}"),
@@ -90,11 +89,11 @@ class _AxiomFormatter(logging.Formatter):
         # Level badge  e.g.  " INFO"
         lvl_str = f"{level_colour}{level_label}{_RESET}"
 
-        # Logger name – padded so columns stay aligned
+        # Logger name - padded so columns stay aligned
         name_display = record.name[:24]
         name_str = f"{name_col}{name_display:<24}{_RESET}"
 
-        # Source location – filename:lineno, kept short
+        # Source location - filename:lineno, kept short
         loc = f"{record.filename}:{record.lineno}"
         loc_str = f"{_DIM}{loc:<22}{_RESET}"
 
@@ -105,9 +104,8 @@ class _AxiomFormatter(logging.Formatter):
         line = f"{ts_str}  {lvl_str}  [{name_str}]  {loc_str}  {msg_str}"
 
         # Attach exception traceback if present
-        if record.exc_info:
-            if not record.exc_text:
-                record.exc_text = self.formatException(record.exc_info)
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
         if record.exc_text:
             line = f"{line}\n{_FG_RED}{record.exc_text}{_RESET}"
         return line
@@ -143,10 +141,11 @@ def configure_logging(
         level: Minimum log level (default: INFO).
         force_plain: If True, use the plain (non-ANSI) formatter even on a
                      TTY (useful when piping to a file from code).
+
     """
     root = logging.getLogger()
 
-    # Idempotency guard – don't add handlers twice (e.g. during testing)
+    # Idempotency guard - don't add handlers twice (e.g. during testing)
     if root.handlers:
         return
 
@@ -157,14 +156,14 @@ def configure_logging(
 
     use_colour = (not force_plain) and sys.stdout.isatty()
     handler.setFormatter(
-        _AxiomFormatter() if use_colour else _PlainFormatter()
+        _AxiomFormatter() if use_colour else _PlainFormatter(),
     )
 
     root.addHandler(handler)
 
     # Silence extremely chatty third-party loggers that would otherwise flood
     # the output with low-value noise.
-    _SILENCE: list[tuple[str, int]] = [
+    silence_loggers: list[tuple[str, int]] = [
         ("urllib3", logging.WARNING),
         ("requests", logging.WARNING),
         ("feedparser", logging.WARNING),
@@ -178,5 +177,5 @@ def configure_logging(
         ("axiom-node.hasher", logging.WARNING),
         ("axiom_server.discovery_rss", logging.WARNING),
     ]
-    for name, lvl in _SILENCE:
+    for name, lvl in silence_loggers:
         logging.getLogger(name).setLevel(lvl)

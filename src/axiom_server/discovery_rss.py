@@ -13,8 +13,8 @@ from concurrent.futures import (
 )  # <-- NEW IMPORT
 from typing import Final
 
-import requests
 import feedparser
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +206,9 @@ def get_content_from_prioritized_feed(
         logger.info(f"Attempting to process feed: {feed_url}")
         try:
             response = requests.get(
-                feed_url, timeout=10, headers={"User-Agent": "AxiomEngine/1.0"}
+                feed_url,
+                timeout=10,
+                headers={"User-Agent": "AxiomEngine/1.0"},
             )
             response.raise_for_status()
             feed = feedparser.parse(response.content)
@@ -254,7 +256,9 @@ def _fetch_one_feed_headlines(feed_url: str) -> list[str]:
     """
     try:
         response = requests.get(
-            feed_url, timeout=10, headers={"User-Agent": "AxiomEngine/1.0"}
+            feed_url,
+            timeout=10,
+            headers={"User-Agent": "AxiomEngine/1.0"},
         )
         response.raise_for_status()
         feed = feedparser.parse(response.content)

@@ -9,12 +9,12 @@ import argparse
 import json
 import logging
 import os
-import random
+import secrets
 import sys
 import threading
 import time
-from typing import Optional, Union, Any
 from datetime import datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, request
@@ -31,7 +31,6 @@ from axiom_server.api_query import semantic_search_ledger
 from axiom_server.crucible import _extract_dates
 from axiom_server.hasher import FactIndexer
 from axiom_server.ledger import (
-    ENGINE,
     Block,
     Fact,
     FactLink,
@@ -46,7 +45,7 @@ from axiom_server.ledger import (
     get_session_maker,
     initialize_database,
 )
-from sqlalchemy.exc import IntegrityError
+from axiom_server.log_config import configure_logging
 from axiom_server.p2p.constants import (
     BOOTSTRAP_IP_ADDR,
     BOOTSTRAP_PORT,
@@ -54,12 +53,9 @@ from axiom_server.p2p.constants import (
 from axiom_server.p2p.node import (
     ApplicationData,
     Message,
-    MessageType,
     Node as P2PBaseNode,
     PeerLink,
 )
-
-from axiom_server.log_config import configure_logging
 
 __version__ = "3.1.3"
 
@@ -91,11 +87,11 @@ class AxiomNode(P2PBaseNode):
         self,
         host: str,
         port: int,
-        bootstrap_peer: Optional[str],
+        bootstrap_peer: str | None,
         db_name: str = "axiom_ledger.db",
-        limit_cycles: Optional[int] = None,
-        limit_time: Optional[int] = None,  # Duration in seconds
-        heartbeat_file: Optional[str] = None,
+        limit_cycles: int | None = None,
+        limit_time: int | None = None,  # Duration in seconds
+        heartbeat_file: str | None = None,
     ) -> None:
         """Initialize both the P2P layer and the Axiom logic layer."""
         logger.info(f"Initializing Axiom Node on {host}:{port}")
@@ -150,7 +146,7 @@ class AxiomNode(P2PBaseNode):
         message = Message.application_data(data)
         peer_count = len(self.peer_links)
         logger.info(
-            f"Broadcasting {message.message_type} to {peer_count} peers."
+            f"Broadcasting {message.message_type} to {peer_count} peers.",
         )
         self._send_message_to_peers(message)
 
@@ -187,7 +183,7 @@ class AxiomNode(P2PBaseNode):
                     # Handle block sync request from peer
                     since = msg_data.get("since", 0)
                     background_thread_logger.info(
-                        f"Received sync_request from {_link.fmt_addr()} (since height: {since})"
+                        f"Received sync_request from {_link.fmt_addr()} (since height: {since})",
                     )
                     with self.session_maker() as session:
                         blocks = (
@@ -196,7 +192,7 @@ class AxiomNode(P2PBaseNode):
                             .all()
                         )
                         background_thread_logger.info(
-                            f"Sending sync_response to {_link.fmt_addr()} with {len(blocks)} blocks."
+                            f"Sending sync_response to {_link.fmt_addr()} with {len(blocks)} blocks.",
                         )
                         response = {
                             "type": "sync_response",
@@ -208,7 +204,7 @@ class AxiomNode(P2PBaseNode):
                     # Handle block sync response from peer
                     peer_blocks = msg_data.get("blocks", [])
                     background_thread_logger.info(
-                        f"Received sync_response from {_link.fmt_addr()} with {len(peer_blocks)} blocks."
+                        f"Received sync_response from {_link.fmt_addr()} with {len(peer_blocks)} blocks.",
                     )
                     with db_lock:
                         with self.session_maker() as session:
@@ -217,7 +213,7 @@ class AxiomNode(P2PBaseNode):
                                     add_block_from_peer_data(session, b_data)
                                 except Exception as e:
                                     background_thread_logger.warning(
-                                        f"Failed to add synced block #{b_data.get('height')}: {e}"
+                                        f"Failed to add synced block #{b_data.get('height')}: {e}",
                                     )
                                     continue
 
@@ -229,7 +225,9 @@ class AxiomNode(P2PBaseNode):
         threading.Thread(target=process_message, daemon=True).start()
 
     def _send_application_message(
-        self, link: PeerLink, data: dict[str, Any]
+        self,
+        link: PeerLink,
+        data: dict[str, Any],
     ) -> None:
         """Send an application-level message to a specific peer."""
         message = Message.application_data(json.dumps(data))
@@ -267,10 +265,13 @@ class AxiomNode(P2PBaseNode):
 
     def _background_work_loop(self) -> None:
         """Handle Fact-gathering and block-sealing."""
+        # Use SystemRandom for security-compliant randomness
+        rng = secrets.SystemRandom()
+
         # Stagger the startup of the background work to prevent thundering herd on shared resources.
-        startup_delay = random.uniform(5, 15)
+        startup_delay = rng.uniform(5, 15)
         background_thread_logger.info(
-            f"Background thread starting in {startup_delay:.1f}s..."
+            f"Background thread starting in {startup_delay:.1f}s...",
         )
         time.sleep(startup_delay)
 
@@ -316,12 +317,10 @@ class AxiomNode(P2PBaseNode):
                             json.dump(status, f)
                 except Exception as e:
                     background_thread_logger.error(
-                        f"Failed to write heartbeat: {e}"
+                        f"Failed to write heartbeat: {e}",
                     )
             # Periodically re-sync to ensure we haven't missed any headers during quiet times.
-            if (
-                random.random() < 0.2
-            ):  # 20% chance each cycle to check for drift
+            if rng.random() < 0.2:  # 20% chance each cycle to check for drift
                 self._proactive_sync()
             background_thread_logger.info("Axiom engine cycle start")
 
@@ -334,14 +333,17 @@ class AxiomNode(P2PBaseNode):
                         # Every node must always try to contribute facts.
                         try:
                             topics = zeitgeist_engine.get_trending_topics(
-                                top_n=1
+                                top_n=1,
                             )
                             if topics:
                                 background_thread_logger.info(
-                                    f"Trending topic this cycle: {topics[0]}"
+                                    f"Trending topic this cycle: {topics[0]}",
                                 )
                         except Exception:
-                            pass  # Zeitgeist failure must not abort the work cycle.
+                            # Zeitgeist failure must not abort the work cycle.
+                            background_thread_logger.warning(
+                                "Zeitgeist trending topics unavailable.",
+                            )
 
                         content_list = (
                             discovery_rss.get_content_from_prioritized_feed()
@@ -412,7 +414,7 @@ class AxiomNode(P2PBaseNode):
                         )
                     finally:
                         background_thread_logger.info(
-                            "Axiom gathering cycle complete."
+                            "Axiom gathering cycle complete.",
                         )
 
             # --- The database lock is now RELEASED. The API is fully responsive. ---
@@ -458,10 +460,10 @@ class AxiomNode(P2PBaseNode):
             # --- The database lock is RELEASED again. ---
 
             background_thread_logger.info(
-                "Axiom cycle finished. Sleeping for 7.5 minutes."
+                "Axiom cycle finished. Sleeping for 7.5 minutes.",
             )
             # Jitter prevents all nodes from hammering the same RSS feeds simultaneously.
-            jitter = random.uniform(0, 60)
+            jitter = rng.uniform(0, 60)
             time.sleep(450 + jitter)
 
     def start(self) -> None:  # type: ignore[override]
@@ -482,9 +484,10 @@ class AxiomNode(P2PBaseNode):
         cls,
         host: str,
         port: int,
-        bootstrap_peer: Optional[str],
+        bootstrap_peer: str | None,
         db_name: str = "axiom_ledger.db",
-        limit_cycles: Optional[int] = None,
+        limit_cycles: int | None = None,
+        **kwargs: Any,
     ) -> AxiomNode:
         """Create and initialize a complete AxiomNode.
 
@@ -525,7 +528,7 @@ fact_indexer: FactIndexer
 
 
 @app.route("/chat", methods=["POST"])
-def handle_chat_query() -> Union[Response, tuple[Response, int]]:
+def handle_chat_query() -> Response | tuple[Response, int]:
     """Handle natural language queries from the client.
 
     Finding the most semantically similar facts in the ledger.
@@ -708,7 +711,7 @@ def handle_get_facts_by_hash() -> Response:
 
 
 @app.route("/get_merkle_proof", methods=["GET"])
-def handle_get_merkle_proof() -> Union[Response, tuple[Response, int]]:
+def handle_get_merkle_proof() -> Response | tuple[Response, int]:
     """Handle merkle proof request."""
     fact_hash = request.args.get("fact_hash")
     block_height_str = request.args.get("block_height")
@@ -753,7 +756,7 @@ def handle_get_merkle_proof() -> Union[Response, tuple[Response, int]]:
 
 
 @app.route("/anonymous_query", methods=["POST"])
-def handle_anonymous_query() -> Union[Response, tuple[Response, int]]:
+def handle_anonymous_query() -> Response | tuple[Response, int]:
     """Handle anonymous query request."""
     return jsonify({"error": "Anonymous query not implemented in V4"}), 501
 
@@ -765,19 +768,19 @@ def handle_get_proposals() -> tuple[Response, int]:
 
 
 @app.route("/dao/submit_proposal", methods=["POST"])
-def handle_submit_proposal() -> Union[Response, tuple[Response, int]]:
+def handle_submit_proposal() -> Response | tuple[Response, int]:
     """Handle submit proposal request."""
     return jsonify({"error": "DAO not implemented in V4"}), 501
 
 
 @app.route("/dao/submit_vote", methods=["POST"])
-def handle_submit_vote() -> Union[Response, tuple[Response, int]]:
+def handle_submit_vote() -> Response | tuple[Response, int]:
     """Handle submit vote request."""
     return jsonify({"error": "DAO not implemented in V4"}), 501
 
 
 @app.route("/verify_fact", methods=["POST"])
-def handle_verify_fact() -> Union[Response, tuple[Response, int]]:
+def handle_verify_fact() -> Response | tuple[Response, int]:
     """Handle verify fact request."""
     fact_id = (request.json or {}).get("fact_id")
     if not fact_id:
@@ -809,7 +812,7 @@ def handle_verify_fact() -> Union[Response, tuple[Response, int]]:
 @app.route("/get_fact_context/<fact_hash>", methods=["GET"])
 def handle_get_fact_context(
     fact_hash: str,
-) -> Union[Response, tuple[Response, int]]:
+) -> Response | tuple[Response, int]:
     """Handle get fact content request."""
     with node_instance.session_maker() as session:
         target_fact = (

@@ -58,7 +58,7 @@ def test_add_new_block_to_chain(db_session: Session):
         [
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
-        ]
+        ],
     )
     new_block = Block(
         height=genesis.height + 1,

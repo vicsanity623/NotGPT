@@ -6,6 +6,7 @@ import logging
 import select
 import socket as socket_lib
 import ssl
+import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -13,10 +14,11 @@ from enum import Enum
 # Yes, I am renaming socket.socket because type names should
 # start with an uppercase character.
 from socket import socket as Socket  # noqa N812
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
     from types import TracebackType
 
 import cryptography
@@ -94,7 +96,7 @@ class Message(BaseModel):
     """A message carrying information."""
 
     message_type: MessageType
-    content: Union[PeersRequest, PeersSharing, ApplicationData]
+    content: PeersRequest | PeersSharing | ApplicationData
 
     def _to_bytes(self) -> bytes:
         return self.model_dump_json().encode(ENCODING)
@@ -208,8 +210,8 @@ class Peer:
     """Represent the home address of a node."""
 
     ip_address: str
-    port: Optional[int]
-    public_key: Optional[rsa.RSAPublicKey]
+    port: int | None
+    public_key: rsa.RSAPublicKey | None
 
     def can_be_shared(self) -> bool:
         """Check if the peer can be shared.
@@ -324,8 +326,8 @@ class NodeContextManager:
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
-        exc_value: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_value: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Handle stopping the node."""
         self.node.stop()
@@ -364,7 +366,7 @@ class Node:
 
         if not NODE_CERT_FILE.exists() or not NODE_KEY_FILE.exists():
             logger.warning(
-                "SSL certificates not found. Generating self-signed certificates..."
+                "SSL certificates not found. Generating self-signed certificates...",
             )
             _generate_self_signed_cert(NODE_CERT_FILE, NODE_KEY_FILE)
 
@@ -454,7 +456,7 @@ class Node:
     def search_link_by_peer(
         self,
         fun: Callable[[Peer], bool],
-    ) -> Optional[PeerLink]:
+    ) -> PeerLink | None:
         """Search for a PeerLink in the peer_links list whose associated Peer satisfies the given predicate function.
 
         Args:
@@ -488,8 +490,9 @@ class Node:
                 yield link
 
     def search_link(
-        self, fun: Callable[[PeerLink], bool]
-    ) -> Optional[PeerLink]:
+        self,
+        fun: Callable[[PeerLink], bool],
+    ) -> PeerLink | None:
         """Search for a peer link in self.peer_links that matches a given condition.
 
         Args:
@@ -569,7 +572,7 @@ class Node:
         self._send_message(link, Message.peers_request())
         return True
 
-    def _connect_to_peer(self, ip_address: str, port: int) -> Optional[Socket]:
+    def _connect_to_peer(self, ip_address: str, port: int) -> Socket | None:
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -701,7 +704,7 @@ class Node:
                 continue
             self._create_link(shared_peer.ip_address, shared_peer.port)
 
-    def _create_link(self, ip_address: str, port: int) -> Optional[PeerLink]:
+    def _create_link(self, ip_address: str, port: int) -> PeerLink | None:
         socket = self._connect_to_peer(ip_address, port)
 
         if socket is not None:
@@ -809,6 +812,7 @@ def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
     This is used when certificates are missing (e.g., first run or CI).
     """
     import datetime
+
     from cryptography import x509
     from cryptography.x509.oid import NameOID
 
@@ -829,7 +833,7 @@ def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
             x509.NameAttribute(NameOID.LOCALITY_NAME, "San Francisco"),
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Axiom"),
             x509.NameAttribute(NameOID.COMMON_NAME, "axiom-node"),
-        ]
+        ],
     )
     cert = (
         x509.CertificateBuilder()
@@ -841,7 +845,7 @@ def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
         .not_valid_after(
             # Our self-signed cert is valid for 10 years
             datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=3650)
+            + datetime.timedelta(days=3650),
         )
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),

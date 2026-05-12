@@ -10,9 +10,7 @@ import enum
 import hashlib
 import json
 import logging
-import time
-import time
-from typing import Any, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel
 from spacy.tokens.doc import Doc
@@ -45,8 +43,8 @@ from axiom_server.common import NLP_MODEL
 logger = logging.getLogger("ledger")
 
 DB_NAME = "axiom_ledger.db"
-_engine: Optional[Engine] = None
-_SessionMaker: Optional[sessionmaker] = None
+_engine: Engine | None = None
+_SessionMaker: sessionmaker | None = None
 
 
 def get_engine(db_name: str = DB_NAME) -> Engine:
@@ -57,14 +55,13 @@ def get_engine(db_name: str = DB_NAME) -> Engine:
     )
 
 
-def get_session_maker(engine: Optional[Engine] = None) -> sessionmaker:
+def get_session_maker(engine: Engine | None = None) -> sessionmaker:
     """Create a new session maker."""
     if engine is None:
         engine = get_engine()
     return sessionmaker(bind=engine)
 
 
-# For backward compatibility during transition
 ENGINE = get_engine()
 SessionMaker = get_session_maker(ENGINE)
 
@@ -73,6 +70,7 @@ class SyncRequiredError(Exception):
     """Raised when a peer is ahead of us and we need to catch up."""
 
     def __init__(self, target_height: int) -> None:
+        """Initialize SyncRequiredError with the target height."""
         self.target_height = target_height
         super().__init__(f"Sync required to height {target_height}")
 
@@ -101,10 +99,10 @@ class FactStatus(str, enum.Enum):
 class RelationshipType(str, enum.Enum):
     """Defines the nature of the link between two facts."""
 
-    CORRELATION = "correlation"  # The facts are about the same topic.
-    CONTRADICTION = "contradiction"  # The facts state opposing information.
-    CAUSATION = "causation"  # One fact is a likely cause of the other.
-    CHRONOLOGY = "chronology"  # One fact chronologically follows another.
+    CORRELATION = "correlation"
+    CONTRADICTION = "contradiction"
+    CAUSATION = "causation"
+    CHRONOLOGY = "chronology"
     ELABORATION = "elaboration"
 
 
@@ -392,7 +390,7 @@ def initialize_database(engine: Engine) -> None:
     logger.info("initialized database")
 
 
-def get_latest_block(session: Session) -> Optional[Block]:
+def get_latest_block(session: Session) -> Block | None:
     """Return latest block from session if it exists."""
     return session.query(Block).order_by(Block.height.desc()).first()
 
@@ -411,7 +409,7 @@ def create_genesis_block(session: Session) -> None:
         height=0,
         previous_hash="0",
         fact_hashes=json.dumps([]),
-        timestamp=1715414400.0,  # 2024-05-11 08:00:00 UTC
+        timestamp=1715414400.0,
     )
     genesis.seal_block(difficulty=2)
     session.add(genesis)
@@ -419,7 +417,6 @@ def create_genesis_block(session: Session) -> None:
     logger.info("Genesis Block created and sealed.")
 
 
-# --- NEW FUNCTION FOR P2P SYNCHRONIZATION ---
 def add_block_from_peer_data(
     session: Session,
     block_data: dict[str, Any],
@@ -448,14 +445,12 @@ def add_block_from_peer_data(
     peer_height = block_data["height"]
     current_height = latest_local_block.height
 
-    # 1. Check if the block is from the past or already known
     if peer_height <= current_height:
         logger.info(
             f"Ignoring old block #{peer_height} from peer (current height is {current_height}).",
         )
         return latest_local_block
 
-    # 2. Check if we are behind (gap in sequence)
     expected_height = current_height + 1
     if peer_height > expected_height:
         logger.warning(
@@ -463,7 +458,6 @@ def add_block_from_peer_data(
         )
         raise SyncRequiredError(target_height=peer_height)
 
-    # 3. CRITICAL VALIDATION: Does the new block correctly chain to our latest block?
     if block_data["previous_hash"] != latest_local_block.hash:
         raise ValueError(
             f"Block integrity error: Peer block's previous_hash "
@@ -471,7 +465,6 @@ def add_block_from_peer_data(
             f"({latest_local_block.hash}). A fork may have occurred.",
         )
 
-    # 3. If validation passes, create the Block object from the peer data.
     new_block = Block(
         height=block_data["height"],
         hash=block_data["hash"],
@@ -491,10 +484,8 @@ def add_block_from_peer_data(
         return new_block
     except IntegrityError:
         session.rollback()
-        # This happens if another thread/process inserted the same block height
-        # between our check and our commit. We simply return the latest local block.
         logger.warning(
-            f"Block #{block_data['height']} already exists in ledger. Skipping duplicate."
+            f"Block #{block_data['height']} already exists in ledger. Skipping duplicate.",
         )
         return get_latest_block(session) or latest_local_block
 

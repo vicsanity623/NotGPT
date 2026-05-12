@@ -1,4 +1,4 @@
-# maintain_feeds.py (Version 1.0 - The Unified Toolchain)
+# maintain_feeds.py
 """A single, powerful script to maintain the Axiom Engine's RSS feed list.
 
 This script will automatically:
@@ -31,7 +31,6 @@ import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
-# --- This allows us to import directly from the axiom_server directory ---
 sys.path.insert(0, os.path.join(os.getcwd(), "src"))
 SOURCE_FILE_PATH = os.path.join("src", "axiom_server", "discovery_rss.py")
 BACKUP_FILE_PATH = f"{SOURCE_FILE_PATH}.bak"
@@ -82,18 +81,16 @@ def _find_single_replacement(
 
     verified_replacements = set()
     try:
-        # Strategies 1 & 2: Homepage scraping and guessing
         parsed_uri = urlparse(bad_url)
         base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
         r = requests.get(base_url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(r.content, "lxml")  # Use the better parser
+        soup = BeautifulSoup(r.content, "lxml")
         for link in soup.find_all(
             "link",
             {"rel": "alternate", "type": "application/rss+xml"},
         ):
             url = urljoin(base_url, link.get("href"))
             is_valid, title = _verify_url(url)
-            # Relevance Check: Does the new feed title seem related to the original?
             if is_valid and original_site_title.lower() in title.lower():
                 verified_replacements.add(url)
     except Exception as exc:
@@ -161,7 +158,7 @@ def main() -> None:
     # --- Phase 1: Verification ---
     print("--- Phase 1: Verifying all current feeds... ---")
     good_feeds: set[str] = set()
-    bad_feeds_map: dict[str, str] = {}  # {url: site_title}
+    bad_feeds_map: dict[str, str] = {}
 
     with ThreadPoolExecutor(max_workers=16) as executor:
         future_to_url = {
@@ -169,11 +166,10 @@ def main() -> None:
         }
         for future in as_completed(future_to_url):
             url = future_to_url[future]
-            is_valid, title = future.result()
+            is_valid, _ = future.result()
             if is_valid:
                 good_feeds.add(url)
             else:
-                # Try to get a site title for better searching later
                 domain = (
                     urlparse(url)
                     .netloc.replace("www.", "")
@@ -209,9 +205,7 @@ def main() -> None:
             original_url = future_to_url[future]
             replacements = future.result()
             if replacements:
-                replacement_map[original_url] = replacements[
-                    0
-                ]  # Use the first good one
+                replacement_map[original_url] = replacements[0]
 
     # --- Step 3: Rewrite the Source File ---
     print("\n--- Phase 3: Updating the source file... ---")
@@ -227,14 +221,12 @@ def main() -> None:
         if url in good_feeds:
             new_lines.append(line)
         elif url in replacement_map:
-            # Replace the old URL with the new one, keeping surrounding quotes and commas
             new_line = line.replace(url, replacement_map[url])
             new_lines.append(new_line)
             print(
                 f"  [🔧 REPAIRED] Replaced {url} with {replacement_map[url]}",
             )
         else:
-            # Comment out the line if no replacement was found
             new_lines.append(f"# {line.lstrip()}")
             print(f"  [DISABLE] Commented out {url}")
 

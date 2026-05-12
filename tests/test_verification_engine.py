@@ -129,7 +129,9 @@ class TestVerificationEngine(unittest.TestCase):
 
         # The similar fact comes from the *same source*
         similar_fact = Fact(
-            id=5, content=similar_fact_text, sources=[self.source1]
+            id=5,
+            content=similar_fact_text,
+            sources=[self.source1],
         )
         similar_fact.get_semantics = MagicMock(
             return_value={"doc": MockSpacyDoc(similar_fact_text)},

@@ -7,7 +7,6 @@ from __future__ import annotations
 # See the LICENSE file for full details.
 import logging
 import re
-import torch
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
@@ -263,7 +262,7 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
                         t.text.lower()
                         for t in sent
                         if t.text.lower() in COMMON_ENGLISH_WORDS
-                    }
+                    },
                 )
                 >= 3
             ),

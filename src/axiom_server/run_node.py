@@ -7,10 +7,9 @@ from typing import Final
 
 from pydantic import BaseModel
 
+from axiom_server.log_config import configure_logging
 from axiom_server.p2p.constants import BOOTSTRAP_IP_ADDR, BOOTSTRAP_PORT
 from axiom_server.p2p.node import Node, NodeContextManager
-
-from axiom_server.log_config import configure_logging
 
 configure_logging()
 

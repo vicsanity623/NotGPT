@@ -48,14 +48,14 @@ dependencies = [
     "PyQt6",
     "beautifulsoup4>=4.12.3",
     "transformers<5.0.0",
-    "torch",
+    "torch; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "numpy<2",
     "scipy",
     "feedparser==6.0.11",
     "ddgs",
 
     # --- AI & Natural Language Processing ---
-    "spacy==3.8.7",
+    "spacy==3.8.7; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "typing-extensions>=4.14.1",
 ]
@@ -99,6 +99,10 @@ axiom_client = ["py.typed"]
 
 [tool.uv]
 package = true
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'"
+]
 
 [tool.mypy]
 files = ["src/axiom_server/", "src/axiom_client/"]
