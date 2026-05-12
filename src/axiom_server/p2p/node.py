@@ -14,10 +14,10 @@ from enum import Enum
 # Yes, I am renaming socket.socket because type names should
 # start with an uppercase character.
 from socket import socket as Socket  # noqa N812
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
     from types import TracebackType
 
@@ -588,7 +588,6 @@ class Node:
             OSError,
             socket_lib.herror,
             socket_lib.gaierror,
-            socket_lib.timeout,
             TimeoutError,
             InterruptedError,
             Exception,

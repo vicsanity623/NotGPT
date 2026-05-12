@@ -52,30 +52,18 @@ esac
 # Install uv in virtual environment
 python -m pip install uv==$UV_VERSION
 
-# Prepare Linux System Dependencies
+# Check if running on Linux and install spacy from binaries
 if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
+    echo "::group::Installing dependencies for Linux"
     if $ON_GITHUB_CI; then
         sudo apt-get update -q
         sudo apt-get install -y -q libxml2-dev libxslt1-dev
     fi
-fi
-
-if [ "$CHECK_FORMATTING" = "1" ]; then
-    python -m uv sync --locked --extra tests --extra tools
-else
-    # Actual tests sync
-    python -m uv sync --locked --extra tests
-fi
-
-# NOW: Install spacy from specific binaries if on Linux
-# This happens AFTER uv sync so it doesn't get overwritten
-if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
-    echo "::group::Overwriting spacy with Linux Optimized Binary"
+    # Get the Ubuntu version
+    UBUNTU_VERSION=$(lsb_release -rs)
     PYTHON_VERSION=$(python -c 'import sys; print("".join(map(str, sys.version_info[:2])))')
-    
-    # Use 'uv pip install' instead of 'uv add' to bypass the universal solver
-    python -m uv pip install --force-reinstall "spacy @ https://github.com/explosion/spaCy/releases/download/release-v${SPACY_VERSION}/spacy-${SPACY_VERSION}-cp${PYTHON_VERSION}-cp${PYTHON_VERSION}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-    
+    # Install spacy from binaries
+    uv add "spacy @ https://github.com/explosion/spaCy/releases/download/release-v${SPACY_VERSION}/spacy-${SPACY_VERSION}-cp${PYTHON_VERSION}-cp${PYTHON_VERSION}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
     # Make sure installation was successful
     SPACY_RUN_VERSION=$(python -c "import importlib.metadata; print(importlib.metadata.version('spacy'))")
     if [[ "${SPACY_RUN_VERSION}" != "${SPACY_VERSION}" ]]; then
@@ -85,28 +73,57 @@ if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
     echo "::endgroup::"
 fi
 
-# Final setup and running
 if [ "$CHECK_FORMATTING" = "1" ]; then
+    python -m uv sync --locked --extra tests --extra tools
+    echo "::endgroup::"
+    # Restore files to original state on Linux
+    if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
+        git restore pyproject.toml uv.lock
+    fi
     source check.sh
 else
-    echo "::group::Setup for tests"
-    mkdir empty || true
-    cd empty
-    python -m spacy download en_core_web_lg
+    # Actual tests
+    # expands to 0 != 1 if NO_TEST_REQUIREMENTS is not set, if set the `-0` has no effect
+    # https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_02
+    if [ "${NO_TEST_REQUIREMENTS-0}" == 1 ]; then
+        python -m uv sync --locked --extra tests
+        flags=""
+        #"--skip-optional-imports"
+    else
+        python -m uv sync --locked --extra tests
+        flags=""
+    fi
+    # Restore files to original state on Linux
+    if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
+        git restore pyproject.toml uv.lock
+    fi
+
     echo "::endgroup::"
 
+    echo "::group::Setup for tests"
+
+    # We run the tests from inside an empty directory, to make sure Python
+    # doesn't pick up any .py files from our working dir. Might have been
+    # pre-created by some of the code above.
+    mkdir empty || true
+    cd empty
+
+    python -m spacy download en_core_web_lg
+
+    echo "::endgroup::"
     echo "::group:: Run Tests"
-    if coverage run --rcfile=../pyproject.toml -m pytest -ra --junitxml=../test-results.xml ../tests --verbose --durations=10; then
+    if coverage run --rcfile=../pyproject.toml -m pytest -ra --junitxml=../test-results.xml ../tests --verbose --durations=10 $flags; then
         PASSED=true
     else
         PASSED=false
     fi
     echo "::endgroup::"
-
     echo "::group::Coverage"
+
     coverage combine --rcfile ../pyproject.toml
     coverage report -m --rcfile ../pyproject.toml
     coverage xml --rcfile ../pyproject.toml
+
     echo "::endgroup::"
     $PASSED
 fi

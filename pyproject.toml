@@ -55,7 +55,7 @@ dependencies = [
     "ddgs",
 
     # --- AI & Natural Language Processing ---
-    "spacy==3.8.7; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "spacy>=3.7.2,<3.8.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "typing-extensions>=4.14.1",
 ]
