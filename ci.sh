@@ -27,8 +27,30 @@ echo "::endgroup::"
 echo "::group::Install dependencies"
 python -m pip install -U pip tomli
 python -m pip --version
-UV_VERSION=$(python -c 'import tomli; from pathlib import Path; print({p["name"]:p for p in tomli.loads(Path("uv.lock").read_text())["package"]}["uv"]["version"])')
-SPACY_VERSION=$(python -c 'import tomli; from pathlib import Path; print({p["name"]:p for p in tomli.loads(Path("uv.lock").read_text())["package"]}["spacy"]["version"])')
+# Function to extract version from uv.lock using the best available TOML parser
+get_version() {
+    local pkg=$1
+    python -c "
+try:
+    import tomllib as toml
+except ImportError:
+    import tomli as toml
+from pathlib import Path
+lock = toml.loads(Path('uv.lock').read_text())
+packages = lock.get('package', [])
+# Handle potential multiple versions by taking the latest/first match
+versions = [p['version'] for p in packages if p['name'] == '$pkg']
+if versions:
+    print(versions[0])
+else:
+    import sys
+    sys.exit(1)
+"
+}
+
+UV_VERSION=$(get_version "uv")
+SPACY_VERSION=$(get_version "spacy")
+
 python -m pip install uv==$UV_VERSION
 python -m uv --version
 
@@ -109,7 +131,8 @@ else
     mkdir empty || true
     cd empty
 
-    python -m spacy download en_core_web_lg
+    # en_core_web_lg is installed via pyproject.toml URL dependency
+    # python -m spacy download en_core_web_lg
 
     echo "::endgroup::"
     echo "::group:: Run Tests"
