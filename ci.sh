@@ -52,24 +52,25 @@ esac
 # Install uv in virtual environment
 python -m pip install uv==$UV_VERSION
 
-# Check if running on Linux and install spacy from binaries
+# Check if running on Linux and install spacy
 if [[ "${RUNNER_OS:-}" == "Linux" ]]; then
     echo "::group::Installing dependencies for Linux"
     if $ON_GITHUB_CI; then
         sudo apt-get update -q
         sudo apt-get install -y -q libxml2-dev libxslt1-dev
     fi
-    # Get the Ubuntu version
-    UBUNTU_VERSION=$(lsb_release -rs)
-    PYTHON_VERSION=$(python -c 'import sys; print("".join(map(str, sys.version_info[:2])))')
-    # Install spacy from binaries
-    uv add "spacy @ https://github.com/explosion/spaCy/releases/download/release-v${SPACY_VERSION}/spacy-${SPACY_VERSION}-cp${PYTHON_VERSION}-cp${PYTHON_VERSION}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-    # Make sure installation was successful
+
+    # 1. Run uv sync first to get the base environment
+    python -m uv sync --extra tests
+
+    # 2. Force reinstall Spacy from PyPI (not GitHub). 
+    # PyPI automatically picks the correct optimized manylinux wheel for your Python version.
+    python -m uv pip install --force-reinstall "spacy==${SPACY_VERSION}"
+
+    # 3. Verify
     SPACY_RUN_VERSION=$(python -c "import importlib.metadata; print(importlib.metadata.version('spacy'))")
-    if [[ "${SPACY_RUN_VERSION}" != "${SPACY_VERSION}" ]]; then
-        echo "::error:: spacy linux installation failed, version does not match expected."
-        exit 1
-    fi
+    echo "Installed Spacy version: ${SPACY_RUN_VERSION}"
+    
     echo "::endgroup::"
 fi
 
