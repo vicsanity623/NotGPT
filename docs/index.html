@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Axiom | Decentralized Knowledge Network</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
     <!-- Modern Typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -526,61 +527,110 @@
         const statusText = document.getElementById('status-text');
         const blockHeightTag = document.getElementById('block-height-tag');
         const typingIndicator = document.getElementById('typing-indicator');
-
-        let activeUrl = null;
-        const potentialUrls = [
-            'http://127.0.0.1:8001',
-            'http://localhost:8001',
-            'http://127.0.0.1:8000',
-            'http://localhost:8000',
-            'https://axiom-engine.duckdns.org'
-        ];
-
-        // --- Connectivity Logic ---
-        async function checkConnectivity() {
-            for (const url of potentialUrls) {
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 1500);
-                    const response = await fetch(`${url}/status`, { signal: controller.signal });
-                    clearTimeout(timeoutId);
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        activeUrl = url;
-                        statusDot.classList.add('online');
-                        statusText.textContent = `Online: ${url.replace('http://', '')}`;
-                        blockHeightTag.textContent = `Block Height: ${data.latest_block_height}`;
-                        sendBtn.disabled = false;
-                        sendBtn.title = "Send message";
-                        return true;
-                    }
-                } catch (e) { }
-            }
-
-            // 2. If local is offline, check for the Cloud Heartbeat (status.json)
+        
+        let db = null;
+        
+        async function initDatabase() {
             try {
-                const response = await fetch('status.json');
-                if (response.ok) {
-                    const data = await response.json();
-                    statusDot.classList.remove('online');
-                    statusDot.style.backgroundColor = '#ff9800'; // Orange for "Remote Active"
-                    statusText.textContent = `Cloud Node: Active (${data.cycle_count} cycles)`;
-                    blockHeightTag.textContent = `Cloud Height: ${data.block_height}`;
+                statusText.textContent = "Loading Ledger...";
+                
+                // 1. Initialize SQL.js
+                const sqlPromise = initSqlJs({
+                    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+                });
+                
+                // 2. Fetch the .db file from your repo
+                const dataPromise = fetch('ledger.db').then(res => {
+                    if (!res.ok) throw new Error("Database file not found in repo.");
+                    return res.arrayBuffer();
+                });
+        
+                const [SQL, buf] = await Promise.all([sqlPromise, dataPromise]);
+                
+                // 3. Load the database into memory
+                db = new SQL.Database(new Uint8Array(buf));
+                
+                statusDot.classList.add('online');
+                statusText.textContent = "Ledger Loaded (Local)";
+                
+                // Get "Block Height" (count of records)
+                const res = db.exec("SELECT COUNT(*) FROM facts");
+                const count = res[0].values[0][0];
+                blockHeightTag.textContent = `Facts Ingested: ${count}`;
+                
+                sendBtn.disabled = false;
+                sendBtn.title = "Search the ledger";
+            } catch (e) {
+                console.error(e);
+                statusText.textContent = "Error: " + e.message;
+                statusDot.style.backgroundColor = "red";
+            }
+        }
+        
+        // --- Search Logic ---
+        async function handleSend() {
+            const query = userInput.value.trim();
+            if (!query || !db) return;
+        
+            appendMessage('user', query);
+            userInput.value = '';
+            
+            typingIndicator.style.display = 'block';
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        
+            // Simulate "Search" delay
+            setTimeout(() => {
+                try {
+                    // "Search" logic: Looking for keyword matches in the content column
+                    // You can make this more advanced with Full Text Search (FTS5) if your DB has it
+                    const stmt = db.prepare("SELECT * FROM facts WHERE content LIKE :q LIMIT 3");
+                    const results = [];
                     
-                    if (!activeUrl) {
-                        sendBtn.disabled = true;
-                        sendBtn.title = "Connect a local node to chat. Cloud node is read-only.";
+                    stmt.bind({':q': `%${query}%`});
+                    while(stmt.step()) {
+                        const row = stmt.getAsObject();
+                        results.push({
+                            content: row.content,
+                            hash: row.hash || '0x' + Math.random().toString(16).slice(2, 10),
+                            status: row.status || 'corroborated',
+                            similarity: 0.95, // Simulated since we're doing LIKE search
+                            sources: row.sources ? row.sources.split(',') : ['Ledger']
+                        });
                     }
-                    return true;
+                    stmt.free();
+        
+                    typingIndicator.style.display = 'none';
+        
+                    if (results.length > 0) {
+                        let axiomResponse = `<p>I found ${results.length} records in the decentralized ledger:</p>`;
+                        results.forEach(res => {
+                            axiomResponse += formatFactResult(res);
+                        });
+                        appendMessage('axiom', axiomResponse, true);
+                    } else {
+                        appendMessage('axiom', "I searched the ledger but found no facts matching that query.");
+                    }
+                } catch (err) {
+                    typingIndicator.style.display = 'none';
+                    appendMessage('axiom', "Database Error: " + err.message);
                 }
-            } catch (e) {}
-
-            statusDot.classList.remove('online');
-            statusText.textContent = "Offline | Start node on 8000";
-            blockHeightTag.textContent = "Disconnected";
-            sendBtn.disabled = true;
-            return false;
+            }, 500);
+        }
+        
+        // --- Helper: Format Fact Result ---
+        function formatFactResult(result) {
+            return `
+                <div class="result-card">
+                    <div class="result-header">
+                        <span class="badge status-${result.status}">${result.status.toUpperCase()}</span>
+                        <div class="fact-hash">${result.hash.substring(0,12)}...</div>
+                    </div>
+                    <blockquote>"${escapeHtml(result.content)}"</blockquote>
+                    <div class="source-tags">
+                        ${result.sources.map(s => `<span class="source-tag">${s}</span>`).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         // --- Chat Logic ---
@@ -601,34 +651,6 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        function formatFactResult(result) {
-            const similarity = (result.similarity * 100).toFixed(1);
-            const truncatedHash = result.hash ? `${result.hash.substring(0, 12)}...` : 'N/A';
-            const statusClass = `status-${result.status || 'ingested'}`;
-            const statusLabel = result.status ? result.status.charAt(0).toUpperCase() + result.status.slice(1) : 'Ingested';
-            
-            let sourceHtml = '';
-            if (result.sources && result.sources.length > 0) {
-                sourceHtml = `<div class="source-tags">
-                    ${result.sources.map(s => `<span class="source-tag">${s}</span>`).join('')}
-                </div>`;
-            }
-
-            return `
-                <div class="result-card">
-                    <div class="result-header">
-                        <span class="badge ${statusClass}">${statusLabel}</span>
-                        <div class="fact-hash" title="${result.hash}">
-                            ${truncatedHash}
-                            <svg class="copy-btn" onclick="copyToClipboard('${result.hash}')" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </div>
-                    </div>
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 8px;">Semantic Match: ${similarity}%</p>
-                    <blockquote>"${escapeHtml(result.content)}"</blockquote>
-                    ${sourceHtml}
-                </div>
-            `;
-        }
 
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text);
@@ -639,51 +661,6 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
-        }
-
-        async function handleSend() {
-            const query = userInput.value.trim();
-            if (!query || !activeUrl) return;
-
-            appendMessage('user', query);
-            userInput.value = '';
-            userInput.style.height = 'auto';
-            
-            typingIndicator.style.display = 'block';
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            try {
-                const response = await fetch(`${activeUrl}/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: query })
-                });
-
-                if (!response.ok) throw new Error("Network response was not ok");
-                
-                const data = await response.json();
-                typingIndicator.style.display = 'none';
-                
-                if (data.results && data.results.length > 0) {
-                    const topResult = data.results[0];
-                    let axiomResponse = `<p>Based on the ledger, I found the following corroborated facts:</p>`;
-                    axiomResponse += formatFactResult(topResult);
-                    
-                    if (data.results.length > 1) {
-                        axiomResponse += `<p style="margin-top: 16px; font-size: 14px; color: var(--text-secondary);">Other related facts:</p>`;
-                        for(let i=1; i < Math.min(3, data.results.length); i++) {
-                            axiomResponse += formatFactResult(data.results[i]);
-                        }
-                    }
-
-                    appendMessage('axiom', axiomResponse, true);
-                } else {
-                    appendMessage('axiom', "I searched the ledger but couldn't find any facts matching your query.");
-                }
-            } catch (error) {
-                typingIndicator.style.display = 'none';
-                appendMessage('axiom', `Error: Could not reach the Axiom node. ${error.message}`);
-            }
         }
 
         function setQuery(text) {
@@ -713,9 +690,7 @@
 
         sendBtn.addEventListener('click', handleSend);
 
-        // Initial connection check
-        checkConnectivity();
-        setInterval(checkConnectivity, 10000);
+        initDatabase();
     </script>
 </body>
 </html>
