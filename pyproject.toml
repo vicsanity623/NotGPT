@@ -174,6 +174,8 @@ extend-ignore = [
     "PYI041", # redundant-numeric-union
     "S101",   # assert (use of assert for tests and type narrowing)
     "SIM117", # multiple-with-statements
+    "D107",   # ignore missing docstrings in __init__
+    "D401",   # ignore imperative mood enforcement
 ]
 
 [tool.ruff.lint.per-file-ignores]
