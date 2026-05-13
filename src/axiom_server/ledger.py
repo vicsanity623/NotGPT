@@ -44,7 +44,7 @@ logger = logging.getLogger("ledger")
 
 DB_NAME = "axiom_ledger.db"
 _engine: Engine | None = None
-_SessionMaker: sessionmaker | None = None
+_SessionMaker: sessionmaker[Session] | None = None
 
 
 def get_engine(db_name: str = DB_NAME) -> Engine:
@@ -55,7 +55,7 @@ def get_engine(db_name: str = DB_NAME) -> Engine:
     )
 
 
-def get_session_maker(engine: Engine | None = None) -> sessionmaker:
+def get_session_maker(engine: Engine | None = None) -> sessionmaker[Session]:
     """Create a new session maker."""
     if engine is None:
         engine = get_engine()
