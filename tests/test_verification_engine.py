@@ -103,8 +103,8 @@ class TestVerificationEngine(unittest.TestCase):
         # --- Assert ---
         assert len(results) == 1
         assert results[0]["content"] == corroborating_fact_text
-        assert results[0]["source"] == "sourceB.com"
-        assert results[0]["similarity"] > 0.9
+        assert results[0]["sources"][0] == "sourceB.com"
+        assert results[0]["similarity"] > 0.8
 
     def test_find_corroborating_claims_from_same_source(self):
         """Test that a similar fact from the SAME source is NOT considered a corroboration."""

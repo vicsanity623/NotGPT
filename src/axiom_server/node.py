@@ -136,7 +136,8 @@ class AxiomNode(P2PBaseNode):
 
         self.active_proposals: dict[int, Proposal] = {}
         self.fact_votes: dict[
-            str, set[str],
+            str,
+            set[str],
         ] = {}  # fact_hash -> set of peer_ids
         self.limit_cycles = limit_cycles
         self.cycle_count = 0
@@ -290,7 +291,9 @@ class AxiomNode(P2PBaseNode):
         self._send_application_message(link, sync_req)
 
     def _handle_fact_proposal(
-        self, link: PeerLink, data: dict[str, Any],
+        self,
+        link: PeerLink,
+        data: dict[str, Any],
     ) -> None:
         """Handle a fact proposal from a peer."""
         fact_data = data.get("fact")
