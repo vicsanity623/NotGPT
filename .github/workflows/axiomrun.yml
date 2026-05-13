@@ -45,8 +45,7 @@ jobs:
           git config --global user.name "Axiom Cloud Node"
           git config --global user.email "axiom-node@users.noreply.github.com"
           
-          # Explicitly add the files inside the docs folder
-          git add docs/ledger.db docs/status.json
+          git add -f docs/ledger.db docs/status.json uv.lock
           
           if git diff --staged --quiet; then
             echo "No changes to commit."
