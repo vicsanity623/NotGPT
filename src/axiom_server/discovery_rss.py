@@ -112,9 +112,16 @@ def get_content_from_prioritized_feed(
             for entry in feed.entries[:max_items]:
                 source_url = entry.get("link")
                 content = entry.get("summary", entry.get("description", ""))
+                published_date = entry.get(
+                    "published", entry.get("updated", ""),
+                )
                 if source_url and content:
                     content_list.append(
-                        {"source_url": source_url, "content": content},
+                        {
+                            "source_url": source_url,
+                            "content": content,
+                            "published_date": published_date,
+                        },
                     )
 
             if content_list:

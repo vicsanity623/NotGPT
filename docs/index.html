@@ -336,6 +336,37 @@
             font-weight: 500;
         }
 
+        .fact-metadata {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 16px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+        }
+
+        .fact-date {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .fact-source-link {
+            color: var(--accent);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.2s;
+        }
+
+        .fact-source-link:hover {
+            color: white;
+            text-decoration: underline;
+        }
+
         /* --- Input Area --- */
         .input-area {
             padding: 24px;
@@ -569,10 +600,10 @@
         
         // --- Search Logic ---
         async function handleSend() {
-            const query = userInput.value.trim();
-            if (!query || !db) return;
+            const rawQuery = userInput.value.trim();
+            if (!rawQuery || !db) return;
         
-            appendMessage('user', query);
+            appendMessage('user', rawQuery);
             userInput.value = '';
             
             typingIndicator.style.display = 'block';
@@ -581,28 +612,44 @@
             // Simulate "Search" delay
             setTimeout(() => {
                 try {
-                    // "Search" logic: Looking for keyword matches in the content column
-                    // You can make this more advanced with Full Text Search (FTS5) if your DB has it
-                    const stmt = db.prepare("SELECT * FROM facts WHERE content LIKE :q LIMIT 3");
-                    const results = [];
+                    const query = rawQuery.toLowerCase();
+                    const words = query.split(/\s+/).filter(w => w.length > 1);
                     
+                    // 1. Try exact phrase match first
+                    let stmt = db.prepare("SELECT * FROM facts WHERE lower(content) LIKE :q LIMIT 5");
                     stmt.bind({':q': `%${query}%`});
+                    
+                    let results = [];
                     while(stmt.step()) {
                         const row = stmt.getAsObject();
-                        results.push({
-                            content: row.content,
-                            hash: row.hash || '0x' + Math.random().toString(16).slice(2, 10),
-                            status: row.status || 'corroborated',
-                            similarity: 0.95, // Simulated since we're doing LIKE search
-                            sources: row.sources ? row.sources.split(',') : ['Ledger']
-                        });
+                        results.push(mapRowToResult(row, 1.0));
                     }
                     stmt.free();
+
+                    // 2. If no exact match, try keyword matching (fuzzy-ish)
+                    if (results.length === 0 && words.length > 0) {
+                        // Search for records that contain ANY of the words
+                        const placeholders = words.map((_, i) => `@w${i}`).join(' OR lower(content) LIKE ');
+                        const sql = `SELECT *, (
+                            ${words.map((_, i) => `(CASE WHEN lower(content) LIKE @w${i} THEN 1 ELSE 0 END)`).join(' + ')}
+                        ) as rank FROM facts WHERE lower(content) LIKE ${placeholders} ORDER BY rank DESC LIMIT 5`;
+                        
+                        const stmt2 = db.prepare(sql);
+                        const params = {};
+                        words.forEach((w, i) => { params[`@w${i}`] = `%${w}%`; });
+                        stmt2.bind(params);
+                        
+                        while(stmt2.step()) {
+                            const row = stmt2.getAsObject();
+                            results.push(mapRowToResult(row, row.rank / words.length));
+                        }
+                        stmt2.free();
+                    }
         
                     typingIndicator.style.display = 'none';
         
                     if (results.length > 0) {
-                        let axiomResponse = `<p>I found ${results.length} records in the decentralized ledger:</p>`;
+                        let axiomResponse = `<p>I found ${results.length} record${results.length > 1 ? 's' : ''} in the decentralized ledger:</p>`;
                         results.forEach(res => {
                             axiomResponse += formatFactResult(res);
                         });
@@ -611,14 +658,41 @@
                         appendMessage('axiom', "I searched the ledger but found no facts matching that query.");
                     }
                 } catch (err) {
+                    console.error(err);
                     typingIndicator.style.display = 'none';
                     appendMessage('axiom', "Database Error: " + err.message);
                 }
-            }, 500);
+            }, 600);
+        }
+
+        function mapRowToResult(row, score) {
+            return {
+                content: row.content,
+                hash: row.hash || '0x' + Math.random().toString(16).slice(2, 10),
+                status: row.status || 'corroborated',
+                published_date: row.published_date,
+                primary_source_url: row.primary_source_url,
+                score: score,
+                sources: row.sources ? row.sources.split(',') : ['Ledger']
+            };
         }
         
         // --- Helper: Format Fact Result ---
         function formatFactResult(result) {
+            const dateHtml = result.published_date 
+                ? `<div class="fact-date">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    ${result.published_date}
+                   </div>` 
+                : '';
+
+            const sourceHtml = result.primary_source_url 
+                ? `<a href="${result.primary_source_url}" target="_blank" class="fact-source-link">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    Source Link
+                   </a>`
+                : `<span class="source-tag">${result.sources[0]}</span>`;
+
             return `
                 <div class="result-card">
                     <div class="result-header">
@@ -626,8 +700,9 @@
                         <div class="fact-hash">${result.hash.substring(0,12)}...</div>
                     </div>
                     <blockquote>"${escapeHtml(result.content)}"</blockquote>
-                    <div class="source-tags">
-                        ${result.sources.map(s => `<span class="source-tag">${s}</span>`).join('')}
+                    <div class="fact-metadata">
+                        ${dateHtml}
+                        ${sourceHtml}
                     </div>
                 </div>
             `;

@@ -493,6 +493,7 @@ class AxiomNode(P2PBaseNode):
                                 new_facts = crucible.extract_facts_from_text(
                                     content_to_process,
                                     source_url=source_url,
+                                    published_date=item.get("published_date"),
                                 )
                                 for fact in new_facts:
                                     fact.sources.append(source)
