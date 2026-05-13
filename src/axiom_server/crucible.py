@@ -240,26 +240,40 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
         Check(
             lambda sent: any(
                 ent.label_
-                in {"PERSON", "ORG", "GPE", "NORP", "FAC", "EVENT", "LAW"}
-                for ent in sent.ents
-            ),
-            "missing core named entities (PERSON, ORG, GPE, etc.)",
-        ),
-        Check(
-            lambda sent: any(
-                ent.label_
                 in {
-                    "DATE",
-                    "TIME",
-                    "PERCENT",
-                    "MONEY",
-                    "QUANTITY",
-                    "ORDINAL",
-                    "CARDINAL",
+                    "PERSON",
+                    "ORG",
+                    "GPE",
+                    "NORP",
+                    "FAC",
+                    "EVENT",
+                    "LAW",
+                    "PRODUCT",
+                    "LOC",
+                    "WORK_OF_ART",
                 }
                 for ent in sent.ents
             ),
-            "missing high-value atomic data (numbers, dates, percentages, etc.)",
+            "missing core named entities",
+        ),
+        Check(
+            lambda sent: (
+                any(
+                    ent.label_
+                    in {
+                        "DATE",
+                        "TIME",
+                        "PERCENT",
+                        "MONEY",
+                        "QUANTITY",
+                        "ORDINAL",
+                        "CARDINAL",
+                    }
+                    for ent in sent.ents
+                )
+                or len(sent.text) > 60
+            ),
+            "missing value data or insufficient length",
         ),
         Check(
             lambda sent: (
@@ -378,7 +392,7 @@ def extract_facts_from_text(
                     label = result["labels"][0]
                     score = result["scores"][0]
 
-                    if label != "verifiable claim":
+                    if label != "verifiable claim" and score > 0.8:
                         logger.debug(
                             f"Sentence rejected as {label} ({score:.2f}): {checked_sentence.text[:50]}...",
                         )
@@ -411,6 +425,10 @@ def extract_facts_from_text(
                     preanalyzed_fact := FACT_PREANALYSIS.run(fact)
                 ) is not None:
                     facts.append(preanalyzed_fact)
+        else:
+            logger.debug(
+                f"Sentence rejected by checks: {clean_sentence_text[:50]}...",
+            )
     return facts
 
 

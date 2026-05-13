@@ -495,6 +495,9 @@ class AxiomNode(P2PBaseNode):
                                     source_url=source_url,
                                     published_date=item.get("published_date"),
                                 )
+                                background_thread_logger.info(
+                                    f"Extracted {len(new_facts)} potential facts from {source_url}",
+                                )
                                 for fact in new_facts:
                                     fact.set_hash()
                                     # Check for existing fact with the same hash
