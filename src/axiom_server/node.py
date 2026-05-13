@@ -383,6 +383,7 @@ class AxiomNode(P2PBaseNode):
                 # Use os._exit to ensure all threads (including Flask) stop immediately.
                 os._exit(0)
 
+            # Check time limit at the start of every cycle
             if (
                 self.limit_time
                 and (time.time() - self.start_time) >= self.limit_time
@@ -405,6 +406,9 @@ class AxiomNode(P2PBaseNode):
                             "block_height": latest.height if latest else 0,
                             "version": __version__,
                             "cycle_count": self.cycle_count,
+                            "uptime_seconds": int(
+                                time.time() - self.start_time,
+                            ),
                         }
                         with open(self.heartbeat_file, "w") as f:
                             json.dump(status, f)
@@ -594,10 +598,28 @@ class AxiomNode(P2PBaseNode):
                                 "No new facts to verify.",
                             )
                         else:
-                            background_thread_logger.debug(
-                                f"Found {len(facts_to_verify)} facts to verify.",
+                            # SCALABILITY FIX: Limit the number of facts verified in a single cycle
+                            # to avoid O(N^2) bottlenecks when the ledger is large.
+                            verification_batch_size = 20
+                            facts_to_verify = facts_to_verify[
+                                :verification_batch_size
+                            ]
+
+                            background_thread_logger.info(
+                                f"Processing {len(facts_to_verify)} facts for verification in this cycle.",
                             )
                             for fact in facts_to_verify:
+                                # Check time limit DURING the loop to ensure we don't exceed it.
+                                if (
+                                    self.limit_time
+                                    and (time.time() - self.start_time)
+                                    >= self.limit_time
+                                ):
+                                    background_thread_logger.info(
+                                        "Time limit reached during verification. Terminating cycle.",
+                                    )
+                                    os._exit(0)
+
                                 claims = verification_engine.find_corroborating_claims(
                                     fact,
                                     session,

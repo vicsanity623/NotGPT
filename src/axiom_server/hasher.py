@@ -74,7 +74,23 @@ class FactIndexer:
         )
         self.fact_ids.append(fact.id)
 
-        # 3. Add the new vector to our NumPy matrix
+        # 3. Persist to DB if not already present
+        from axiom_server.ledger import FactVector
+
+        existing_vec = (
+            self.session.query(FactVector)
+            .filter(FactVector.fact_id == fact.id)
+            .one_or_none()
+        )
+        if not existing_vec:
+            new_vec_row = FactVector(
+                fact_id=fact.id,
+                vector=np.array(fact_vector, dtype=np.float32).tobytes(),
+            )
+            self.session.add(new_vec_row)
+            self.session.commit()
+
+        # 4. Add the new vector to our NumPy matrix
         # Reshape the vector to be a row (1, 300) instead of a flat array (300,)
         new_vector_row = np.array(fact_vector).reshape((1, -1))
 
@@ -88,7 +104,7 @@ class FactIndexer:
             )
 
         logger.info(
-            f"Successfully added Fact ID {fact.id} to the live chat index.",
+            f"Successfully added Fact ID {fact.id} to the live chat index and database.",
         )
 
     def index_facts_from_db(self) -> None:
@@ -104,18 +120,39 @@ class FactIndexer:
             logger.warning("No facts found in the database to index.")
             return
 
+        from axiom_server.ledger import FactVector
+
         for fact in facts_to_index:
             # Store the fact's text content and hash.
             self.fact_id_to_content[fact.id] = fact.content
             self.fact_id_to_hash[fact.id] = fact.hash
 
-            # Create a vector for the fact's content using the large spaCy model.
-            # The .vector attribute provides the semantic representation of the text.
-            doc = NLP_MODEL(fact.content)
-            self.fact_id_to_vector[fact.id] = np.array(doc.vector)
+            # Check if we already have the vector in the DB
+            vec_obj = (
+                self.session.query(FactVector)
+                .filter(FactVector.fact_id == fact.id)
+                .one_or_none()
+            )
 
+            if vec_obj:
+                fact_vector = np.frombuffer(vec_obj.vector, dtype=np.float32)
+            else:
+                # Create a vector for the fact's content using the large spaCy model.
+                doc = NLP_MODEL(fact.content)
+                fact_vector = np.array(doc.vector, dtype=np.float32)
+
+                # Persist it for next time
+                new_vec_row = FactVector(
+                    fact_id=fact.id,
+                    vector=fact_vector.tobytes(),
+                )
+                self.session.add(new_vec_row)
+
+            self.fact_id_to_vector[fact.id] = fact_vector
             # Keep track of the fact ID.
             self.fact_ids.append(fact.id)
+
+        self.session.commit()
 
         # For efficient searching, we stack all the individual vectors into one big
         # NumPy matrix (like a spreadsheet of numbers).

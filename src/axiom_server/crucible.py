@@ -571,10 +571,12 @@ class CrucibleFactAdder:
         entity_filters = [
             Fact.content.ilike(f"%{entity}%") for entity in new_entities
         ]
-        potentially_related_facts = query.filter(or_(*entity_filters)).all()
+        potentially_related_facts = (
+            query.filter(or_(*entity_filters)).limit(30).all()
+        )
 
         logger.info(
-            f"Found {len(potentially_related_facts)} potentially related facts for Fact ID {new_fact.id}.",
+            f"Found {len(potentially_related_facts)} potentially related facts for Fact ID {new_fact.id} (capped at 30).",
         )
 
         for existing_fact in potentially_related_facts:

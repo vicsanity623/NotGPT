@@ -5,7 +5,7 @@
 """The experimental V4 Verification Engine for Axiom nodes."""
 
 import re
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import requests
@@ -15,60 +15,75 @@ from axiom_server.common import NLP_MODEL
 from axiom_server.ledger import Fact
 
 
-# --- The "Simple, Smart, Genius" Corroboration Engine ---
 def find_corroborating_claims(
     fact_to_verify: Fact,
     session: Session,
     min_similarity: float = 0.85,
 ) -> list[dict[str, Any]]:
-    """Perform a vector similarity search across the ledger to find corroboration.
+    """Find facts that corroborate the given fact.
+
+    This is a **vector-based** similarity search. It looks for other facts
+    that are semantically similar in meaning, not just string matches.
 
     Args:
-        fact_to_verify: The Fact object to be verified.
-        session: The SQLAlchemy session to use.
-        min_similarity: The threshold for considering a fact as corroborating.
+        fact_to_verify: The Fact object to find corroboration for.
+        session: The database session.
+        min_similarity: The minimum cosine similarity score (0.0 to 1.0).
+                        Defaults to 0.85 (very high similarity).
 
     Returns:
-        A list of dictionaries representing corroborating facts from different sources.
+        A list of dictionaries, each representing a corroborating fact.
 
     """
     corroborations = []
-    target_doc = NLP_MODEL(fact_to_verify.content)
-    target_vector = cast("Any", target_doc.vector)
-    target_norm = float(np.linalg.norm(target_vector))
+    from axiom_server.ledger import FactVector
 
+    # --- CLEANED UP SECTION ---
+    target_vector_obj = (
+        session.query(FactVector)
+        .filter(FactVector.fact_id == fact_to_verify.id)
+        .one_or_none()
+    )
+
+    if target_vector_obj:
+        target_vector = np.frombuffer(
+            target_vector_obj.vector,
+            dtype=np.float32,
+        )
+    else:
+        # Fallback to NLP model if not in DB
+        target_doc = NLP_MODEL(fact_to_verify.content)
+        target_vector = np.array(target_doc.vector, dtype=np.float32)
+
+    target_norm = float(np.linalg.norm(target_vector))
     if target_norm == 0:
         return []
 
-    # Get the domain of the target fact to ensure multi-source corroboration
     target_domains = {s.domain for s in fact_to_verify.sources}
 
-    # Efficiently query for other facts (excluding disputed ones)
-    # In a real production system, this would use the FactIndexer or a vector DB.
-    other_facts = (
-        session.query(Fact)
-        .filter(
-            Fact.id != fact_to_verify.id,
-            Fact.disputed == False,  # noqa: E712
-        )
-        .all()
-    )
+    # Get all potential corroborators
+    all_vectors = session.query(FactVector).all()
 
-    for other in other_facts:
-        # Skip if from the same source domain
+    for fact_vec in all_vectors:
+        if fact_vec.fact_id == fact_to_verify.id:
+            continue
+
+        other = fact_vec.fact
+        if other.disputed:
+            continue
+
         if any(s.domain in target_domains for s in other.sources):
             continue
 
-        other_doc = NLP_MODEL(other.content)
-        other_vector = cast("Any", other_doc.vector)
+        # Ensure we are passing bytes to frombuffer
+        other_vector = np.frombuffer(fact_vec.vector, dtype=np.float32)
         other_norm = float(np.linalg.norm(other_vector))
 
         if other_norm == 0:
             continue
 
         similarity = float(
-            np.dot(cast("Any", target_vector), other_vector)
-            / (target_norm * other_norm),
+            np.dot(target_vector, other_vector) / (target_norm * other_norm),
         )
 
         if similarity >= min_similarity:

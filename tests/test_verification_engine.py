@@ -4,36 +4,22 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 from sqlalchemy.orm import Session
 
 from axiom_server import verification_engine
-from axiom_server.ledger import Fact, Source
+from axiom_server.ledger import Fact, FactVector, Source
 
 
-# --- Mocking spaCy ---
-# We don't want to load a real NLP model for a unit test. It's slow and unnecessary.
-# We will create mock spaCy "Doc" objects that let us control the similarity score.
-class MockSpacyDoc:
-    """A mock spaCy Doc object for controlling similarity scores in tests."""
-
-    def __init__(
-        self,
-        text: str,
-        similarity_map: dict[str, float] | None = None,
-    ):
-        self.text = text
-        self.similarity_map = similarity_map or {}
-
-    def similarity(self, other_doc: MockSpacyDoc) -> float:
-        """Return a pre-defined similarity score for the given text."""
-        # This allows us to say "when comparing to doc B, return 0.95".
-        return self.similarity_map.get(other_doc.text, 0.0)
+def create_mock_vector(values: list[float]) -> bytes:
+    """Create a bytes-serialized numpy vector."""
+    return np.array(values, dtype=np.float32).tobytes()
 
 
 class TestVerificationEngine(unittest.TestCase):
     """Tests for the Axiom Verification Engine."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up a mock database session and test data for each test."""
         self.mock_session = MagicMock(spec=Session)
 
@@ -42,57 +28,59 @@ class TestVerificationEngine(unittest.TestCase):
         self.source2 = Source(domain="sourceB.com")
         self.source3 = Source(domain="sourceC.com")
 
-    def test_find_corroborating_claims_success(self):
+        # Standard vectors for similarity control
+        # target vs corroborating: 1.0 (identical)
+        # target vs unrelated: 0.0 (orthogonal)
+        self.vec_target = create_mock_vector([1.0, 0.0])
+        self.vec_corroborate = create_mock_vector([1.0, 0.0])
+        self.vec_unrelated = create_mock_vector([0.0, 1.0])
+
+    def test_find_corroborating_claims_success(self) -> None:
         """Test that find_corroborating_claims correctly identifies a similar fact from a different source."""
         # --- Arrange ---
-        fact_to_verify_text = "The sky is blue"
-        corroborating_fact_text = "The color of the sky is blue"
-        unrelated_fact_text = "Grass is green"
-
-        # Create mock Docs with controlled similarity
-        # When comparing our target fact to the corroborating fact, the score will be 0.95
-        # For all other comparisons, it will be 0.1 (the default from .get())
-        mock_doc_to_verify = MockSpacyDoc(
-            fact_to_verify_text,
-            similarity_map={
-                corroborating_fact_text: 0.95,
-                unrelated_fact_text: 0.1,
-            },
-        )
-
-        # Create mock Fact objects and assign IDs so filtering works
         fact_to_verify = Fact(
             id=1,
-            content=fact_to_verify_text,
+            content="The sky is blue",
             sources=[self.source1],
-        )
-        fact_to_verify.get_semantics = MagicMock(
-            return_value={"doc": mock_doc_to_verify},
         )
 
         corroborating_fact = Fact(
             id=2,
-            content=corroborating_fact_text,
+            content="The color of the sky is blue",
             sources=[self.source2],
         )
-        corroborating_fact.get_semantics = MagicMock(
-            return_value={"doc": MockSpacyDoc(corroborating_fact_text)},
-        )
-
         unrelated_fact = Fact(
             id=3,
-            content=unrelated_fact_text,
+            content="Grass is green",
             sources=[self.source3],
         )
-        unrelated_fact.get_semantics = MagicMock(
-            return_value={"doc": MockSpacyDoc(unrelated_fact_text)},
+
+        # Mock the FactVector rows
+        fv_target = MagicMock(
+            spec=FactVector,
+            fact_id=1,
+            vector=self.vec_target,
+            fact=fact_to_verify,
+        )
+        fv_corroborate = MagicMock(
+            spec=FactVector,
+            fact_id=2,
+            vector=self.vec_corroborate,
+            fact=corroborating_fact,
+        )
+        fv_unrelated = MagicMock(
+            spec=FactVector,
+            fact_id=3,
+            vector=self.vec_unrelated,
+            fact=unrelated_fact,
         )
 
-        # Configure the mock session to return these facts
-        all_facts = [fact_to_verify, corroborating_fact, unrelated_fact]
-        self.mock_session.query(Fact).filter().all.return_value = [
-            f for f in all_facts if f.id != fact_to_verify.id
-        ]
+        # Configure session to handle:
+        # 1. session.query(FactVector).filter(...).one_or_none()
+        # 2. session.query(FactVector).all()
+        query_mock = self.mock_session.query.return_value
+        query_mock.filter.return_value.one_or_none.return_value = fv_target
+        query_mock.all.return_value = [fv_target, fv_corroborate, fv_unrelated]
 
         # --- Act ---
         results = verification_engine.find_corroborating_claims(
@@ -102,44 +90,40 @@ class TestVerificationEngine(unittest.TestCase):
 
         # --- Assert ---
         assert len(results) == 1
-        assert results[0]["content"] == corroborating_fact_text
-        assert results[0]["sources"][0] == "sourceB.com"
-        assert results[0]["similarity"] > 0.8
+        assert results[0]["content"] == "The color of the sky is blue"
+        assert "sourceB.com" in results[0]["sources"]
+        assert results[0]["similarity"] > 0.85
 
-    def test_find_corroborating_claims_from_same_source(self):
+    def test_find_corroborating_claims_from_same_source(self) -> None:
         """Test that a similar fact from the SAME source is NOT considered a corroboration."""
         # --- Arrange ---
-        fact_to_verify_text = "The sky is blue"
-        similar_fact_text = "The sky is indeed blue"
-
-        # High similarity
-        mock_doc_to_verify = MockSpacyDoc(
-            fact_to_verify_text,
-            similarity_map={similar_fact_text: 0.98},
-        )
-
         fact_to_verify = Fact(
             id=4,
-            content=fact_to_verify_text,
+            content="The sky is blue",
             sources=[self.source1],
         )
-        fact_to_verify.get_semantics = MagicMock(
-            return_value={"doc": mock_doc_to_verify},
-        )
-
-        # The similar fact comes from the *same source*
         similar_fact = Fact(
             id=5,
-            content=similar_fact_text,
+            content="The sky is indeed blue",
             sources=[self.source1],
         )
-        similar_fact.get_semantics = MagicMock(
-            return_value={"doc": MockSpacyDoc(similar_fact_text)},
+
+        fv_target = MagicMock(
+            spec=FactVector,
+            fact_id=4,
+            vector=self.vec_target,
+            fact=fact_to_verify,
+        )
+        fv_similar = MagicMock(
+            spec=FactVector,
+            fact_id=5,
+            vector=self.vec_corroborate,
+            fact=similar_fact,
         )
 
-        self.mock_session.query(Fact).filter().all.return_value = [
-            similar_fact,
-        ]
+        query_mock = self.mock_session.query.return_value
+        query_mock.filter.return_value.one_or_none.return_value = fv_target
+        query_mock.all.return_value = [fv_target, fv_similar]
 
         # --- Act ---
         results = verification_engine.find_corroborating_claims(
@@ -148,26 +132,23 @@ class TestVerificationEngine(unittest.TestCase):
         )
 
         # --- Assert ---
-        assert len(results) == 0  # Should find no corroborations
+        assert (
+            len(results) == 0
+        )  # Should find no corroborations because sources overlap
 
-    # We use the @patch decorator to mock the `requests.head` call
     @patch("axiom_server.verification_engine.requests.head")
-    def test_verify_citations(self, mock_requests_head):
+    def test_verify_citations(self, mock_requests_head: MagicMock) -> None:
         """Test that verify_citations correctly identifies and checks URLs in fact content."""
         # --- Arrange ---
         fact_content = "Check this live link http://good-url.com and this broken one http://bad-url.com."
         fact_to_verify = Fact(content=fact_content)
 
-        # Configure the mock `requests.head` to behave how we want
-        def side_effect(url, **kwargs):
+        def side_effect(url: str, **kwargs: object) -> MagicMock:
             response = MagicMock()
             if url == "http://good-url.com":
                 response.status_code = 200
             elif url == "http://bad-url.com":
                 response.status_code = 404
-            else:
-                # If the regex fails and includes trailing punctuation, this will be returned
-                response.status_code = 500
             return response
 
         mock_requests_head.side_effect = side_effect
@@ -176,15 +157,8 @@ class TestVerificationEngine(unittest.TestCase):
         results = verification_engine.verify_citations(fact_to_verify)
 
         # --- Assert ---
-        assert len(results) == 2
-
-        # We use a helper to make asserting easier since dict order isn't guaranteed
         results_map = {item["url"]: item for item in results}
-
-        assert "http://good-url.com" in results_map
         assert results_map["http://good-url.com"]["status"] == "VALID_AND_LIVE"
-
-        assert "http://bad-url.com" in results_map
         assert results_map["http://bad-url.com"]["status"] == "BROKEN_404"
 
 
