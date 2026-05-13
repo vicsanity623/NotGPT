@@ -2,8 +2,8 @@ name: Axiom Node Run
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Run every 6 hours
-  workflow_dispatch:      # Allow manual runs
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
