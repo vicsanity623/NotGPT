@@ -33,10 +33,10 @@ jobs:
           uv lock
           uv sync
 
-      - name: Run Axiom Node (5 Hour Session)
+      - name: Run Axiom Node (30 min Session)
         run: |
           # Changed --db-name to docs/ledger.db so it sits next to index.html
-          uv run axiom_server --db-name docs/ledger.db --limit-time 18000 --heartbeat-file docs/status.json
+          uv run axiom_server --db-name docs/ledger.db --limit-time 1800 --heartbeat-file docs/status.json
         env:
           GITHUB_ACTIONS: "true"
 
