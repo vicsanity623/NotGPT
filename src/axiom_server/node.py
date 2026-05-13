@@ -14,13 +14,14 @@ import sys
 import threading
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
 from axiom_server import (
+    article_fetcher,
     crucible,
     discovery_rss,
     merkle,
@@ -58,13 +59,28 @@ from axiom_server.p2p.node import (
     PeerLink,
 )
 
-__version__ = "3.1.3"
+__version__ = "4.0.0"
 
 logger = logging.getLogger("axiom-node")
 background_thread_logger = logging.getLogger("axiom-node.background-thread")
 
 
 CORROBORATION_THRESHOLD = 2
+
+# Phase 2: Trusted Domain Reputation
+TRUSTED_DOMAINS: Final[dict[str, float]] = {
+    "reuters.com": 0.95,
+    "apnews.com": 0.95,
+    "bbc.com": 0.90,
+    "bbc.co.uk": 0.90,
+    "nytimes.com": 0.85,
+    "aljazeera.com": 0.80,
+    "politifact.com": 0.98,
+    "bellingcat.com": 0.95,
+    "propublica.org": 0.95,
+    "ft.com": 0.90,
+    "theguardian.com": 0.85,
+}
 
 # This lock ensures only one thread can access the database at a time.
 db_lock = threading.Lock()
@@ -119,6 +135,9 @@ class AxiomNode(P2PBaseNode):
         )
 
         self.active_proposals: dict[int, Proposal] = {}
+        self.fact_votes: dict[
+            str, set[str],
+        ] = {}  # fact_hash -> set of peer_ids
         self.limit_cycles = limit_cycles
         self.cycle_count = 0
         # The unused ThreadPoolExecutor has been correctly removed.
@@ -218,6 +237,12 @@ class AxiomNode(P2PBaseNode):
                                     )
                                     continue
 
+                elif msg_type == "fact_proposal":
+                    self._handle_fact_proposal(_link, msg_data)
+
+                elif msg_type == "fact_vote":
+                    self._handle_fact_vote(_link, msg_data)
+
             except Exception as exc:
                 background_thread_logger.error(
                     f"Error processing peer message: {exc}",
@@ -263,6 +288,70 @@ class AxiomNode(P2PBaseNode):
             f"Triggering sync from {link.fmt_addr()} since height {current_height}",
         )
         self._send_application_message(link, sync_req)
+
+    def _handle_fact_proposal(
+        self, link: PeerLink, data: dict[str, Any],
+    ) -> None:
+        """Handle a fact proposal from a peer."""
+        fact_data = data.get("fact")
+        if not fact_data:
+            return
+
+        # Simple validation: if we don't have it, we might vote for it if it looks good
+        # For now, we just auto-vote if it has high confidence
+        if fact_data.get("extraction_confidence", 0) > 0.8:
+            background_thread_logger.info(
+                f"Auto-voting for high-confidence fact from {link.fmt_addr()}: {fact_data['hash'][:8]}",
+            )
+            vote = {
+                "type": "fact_vote",
+                "data": {"fact_hash": fact_data["hash"]},
+            }
+            self._send_application_message(link, vote)
+
+    def _handle_fact_vote(self, link: PeerLink, data: dict[str, Any]) -> None:
+        """Handle a vote for a fact we proposed or know about."""
+        fact_hash = data.get("fact_hash")
+        if not fact_hash:
+            return
+
+        peer_id = link.fmt_addr()
+        if fact_hash not in self.fact_votes:
+            self.fact_votes[fact_hash] = set()
+
+        self.fact_votes[fact_hash].add(peer_id)
+        background_thread_logger.info(
+            f"Received vote for {fact_hash[:8]} from {peer_id}. Total: {len(self.fact_votes[fact_hash])}",
+        )
+
+        # If enough votes, upgrade status
+        if len(self.fact_votes[fact_hash]) >= 3:
+            with db_lock:
+                with self.session_maker() as session:
+                    fact = (
+                        session.query(Fact)
+                        .filter(Fact.hash == fact_hash)
+                        .one_or_none()
+                    )
+                    if fact and fact.status != FactStatus.EMPIRICALLY_VERIFIED:
+                        fact.status = FactStatus.EMPIRICALLY_VERIFIED
+                        background_thread_logger.info(
+                            f"Fact {fact_hash[:8]} has reached consensus! Status -> EMPIRICALLY_VERIFIED",
+                        )
+                        session.commit()
+
+    def _broadcast_fact_proposals(self, facts: list[Fact]) -> None:
+        """Broadcast new facts to the network for validation and voting."""
+        for fact in facts:
+            # Only propose high-confidence facts
+            if fact.extraction_confidence > 0.7:
+                proposal = {
+                    "type": "fact_proposal",
+                    "data": {
+                        "fact": SerializedFact.from_fact(fact).model_dump(),
+                    },
+                }
+                self.broadcast_application_message(json.dumps(proposal))
 
     def _background_work_loop(self) -> None:
         """Handle Fact-gathering and block-sealing."""
@@ -361,22 +450,61 @@ class AxiomNode(P2PBaseNode):
                                 fact_indexer,
                             )
                             for item in content_list:
-                                domain = urlparse(item["source_url"]).netloc
+                                source_url = item["source_url"]
+                                domain = urlparse(source_url).netloc
+
+                                # --- Phase 2: Domain Reputation ---
+                                # Extract base domain (e.g., news.bbc.co.uk -> bbc.co.uk)
+                                # Simple heuristic for now: check if netloc contains any trusted domain key
+                                reputation = 0.5
+                                for (
+                                    trusted_domain,
+                                    score,
+                                ) in TRUSTED_DOMAINS.items():
+                                    if trusted_domain in domain:
+                                        reputation = score
+                                        break
+
                                 source = session.query(Source).filter(
                                     Source.domain == domain,
                                 ).one_or_none() or Source(domain=domain)
                                 session.add(source)
 
+                                # --- Phase 2: Full-Text Fetching ---
+                                background_thread_logger.info(
+                                    f"Fetching full text for: {source_url}",
+                                )
+                                full_text = article_fetcher.fetch_article_text(
+                                    source_url,
+                                )
+
+                                # Fallback to RSS summary if full-text fails or is too short
+                                content_to_process = (
+                                    full_text or item["content"]
+                                )
+                                if not full_text:
+                                    background_thread_logger.warning(
+                                        f"Full-text fetch failed for {source_url}, falling back to RSS summary.",
+                                    )
+
                                 new_facts = crucible.extract_facts_from_text(
-                                    item["content"],
+                                    content_to_process,
+                                    source_url=source_url,
                                 )
                                 for fact in new_facts:
                                     fact.sources.append(source)
+                                    fact.source_domain_reputation = reputation
                                     session.add(fact)
                                     session.commit()
                                     with fact_indexer_lock:
                                         adder.add(fact)
                                     facts_for_sealing.append(fact)
+
+                                # --- Phase 3: Proactive P2P Fact Proposals ---
+                                if facts_for_sealing:
+                                    self._broadcast_fact_proposals(
+                                        facts_for_sealing,
+                                    )
 
                             if facts_for_sealing:
                                 background_thread_logger.info(

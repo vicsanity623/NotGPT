@@ -5,11 +5,13 @@
 """The experimental V4 Verification Engine for Axiom nodes."""
 
 import re
-from typing import Any
+from typing import Any, cast
 
+import numpy as np
 import requests
 from sqlalchemy.orm import Session
 
+from axiom_server.common import NLP_MODEL
 from axiom_server.ledger import Fact
 
 
@@ -17,48 +19,65 @@ from axiom_server.ledger import Fact
 def find_corroborating_claims(
     fact_to_verify: Fact,
     session: Session,
+    min_similarity: float = 0.85,
 ) -> list[dict[str, Any]]:
-    """Perform a semantic similarity search across the ledger.
-
-    This function finds facts that corroborate the given fact. This is the
-    heart of the V4 "Corroboration Engine."
+    """Perform a vector similarity search across the ledger to find corroboration.
 
     Args:
         fact_to_verify: The Fact object to be verified.
-        session: The SQLAlchemy session to use for database queries.
+        session: The SQLAlchemy session to use.
+        min_similarity: The threshold for considering a fact as corroborating.
 
     Returns:
-        A list of dictionaries, each representing a corroborating fact.
+        A list of dictionaries representing corroborating facts from different sources.
 
     """
     corroborations = []
+    target_doc = NLP_MODEL(fact_to_verify.content)
+    target_vector = cast("Any", target_doc.vector)
+    target_norm = float(np.linalg.norm(target_vector))
 
-    # This is your "deep dive": get the "brain" of our target fact.
-    target_semantics = fact_to_verify.get_semantics()
-    target_doc = target_semantics["doc"]
+    if target_norm == 0:
+        return []
 
-    # Get all other facts from the ledger to compare against.
-    all_other_facts = (
-        session.query(Fact).filter(Fact.id != fact_to_verify.id).all()
+    # Get the domain of the target fact to ensure multi-source corroboration
+    target_domains = {s.domain for s in fact_to_verify.sources}
+
+    # Efficiently query for other facts (excluding disputed ones)
+    # In a real production system, this would use the FactIndexer or a vector DB.
+    other_facts = (
+        session.query(Fact)
+        .filter(
+            Fact.id != fact_to_verify.id,
+            Fact.disputed == False,  # noqa: E712
+        )
+        .all()
     )
 
-    for other_fact in all_other_facts:
-        other_doc = other_fact.get_semantics()["doc"]
+    for other in other_facts:
+        # Skip if from the same source domain
+        if any(s.domain in target_domains for s in other.sources):
+            continue
 
-        # Use spaCy's powerful, built-in vector similarity comparison.
-        # This is a number from 0.0 (completely different) to 1.0 (identical).
-        similarity_score = target_doc.similarity(other_doc)
+        other_doc = NLP_MODEL(other.content)
+        other_vector = cast("Any", other_doc.vector)
+        other_norm = float(np.linalg.norm(other_vector))
 
-        # We define "corroboration" as high semantic similarity from a different source.
-        if similarity_score > 0.90 and not other_fact.has_source(
-            fact_to_verify.sources[0].domain,
-        ):
+        if other_norm == 0:
+            continue
+
+        similarity = float(
+            np.dot(cast("Any", target_vector), other_vector)
+            / (target_norm * other_norm),
+        )
+
+        if similarity >= min_similarity:
             corroborations.append(
                 {
-                    "fact_id": other_fact.id,
-                    "content": other_fact.content,
-                    "similarity": round(similarity_score, 4),
-                    "source": other_fact.sources[0].domain,
+                    "fact_id": other.id,
+                    "content": other.content,
+                    "similarity": round(similarity, 4),
+                    "sources": [s.domain for s in other.sources],
                 },
             )
 

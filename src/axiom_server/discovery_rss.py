@@ -18,36 +18,36 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Your curated and verified list of RSS feeds.
-RSS_FEEDS: Final[tuple[str, ...]] = (
-    # Major Global News
-    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+# High-signal, authoritative news sources and fact-checkers.
+HIGH_PRIORITY_FEEDS: Final[tuple[str, ...]] = (
     "https://feeds.bbci.co.uk/news/rss.xml",
-    # # "https://www.reutersagency.com/feed/?best-topics=world-news&post_type=best",
-    # "https://web.archive.org/web/20120506093420/https://twitter.com/statuses/user_timeline/2467791.rss",
-    "https://www.theguardian.com/world/rss",
+    "https://www.reutersagency.com/feed/?best-topics=world-news&post_type=best",
+    "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
     "https://www.aljazeera.com/xml/rss/all.xml",
+    "https://apnews.my.id/feed",
+    "https://www.politifact.com/rss/all/",
+    "https://www.bellingcat.com/feed/",
+    "https://www.propublica.org/feeds/propublica/main",
+    "https://api.axios.com/feed/",
+    "https://www.ft.com/rss/home/international",
+)
+
+# Secondary sources for broader coverage and diversity.
+SECONDARY_FEEDS: Final[tuple[str, ...]] = (
+    "https://www.theguardian.com/world/rss",
     "https://www.npr.org/rss/rss.php?id=1001",
     "https://rss.dw.com/rdf/rss-en-all",
     "https://foreignpolicy.com/feed/",
-    # --- Other Major Global Sources (for diverse perspectives) ---
-    "https://www.aljazeera.com/xml/rss/all.xml",  # Al Jazeera - All
-    # # "https://www.cbc.ca/rss/world",                        # CBC (Canada) - World News
-    "https://www.abc.net.au/news/feed/51120/rss.xml",  # ABC (Australia) - Top Stories
-    "https://www.spiegel.de/international/index.rss",  # Der Spiegel (Germany) - International
-    "https://www.lemonde.fr/en/rss/full_feed.xml",  # Le Monde (France) - English Edition
-    "https://www.japantimes.co.jp/feed",  # The Japan Times
-    "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",  # The Times of India
-    # US Focused
-    "https://apnews.my.id/feed",
+    "https://www.abc.net.au/news/feed/51120/rss.xml",
+    "https://www.spiegel.de/international/index.rss",
+    "https://www.lemonde.fr/en/rss/full_feed.xml",
+    "https://www.japantimes.co.jp/feed",
+    "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",
     "https://www.latimes.com/index.rss",
     "https://chicago.suntimes.com/feed/",
-    "https://api.axios.com/feed/",
-    # "https://www.politico.com/rss/politicopicks.xml",
     "https://thehill.com/rss/syndicator/19110",
     "https://www.cbsnews.com/latest/rss/main",
     "https://feeds.nbcnews.com/nbcnews/public/news",
-    # Technology & Science
     "https://www.wired.com/feed/rss",
     "https://www.technologyreview.com/feed/",
     "https://spectrum.ieee.org/rss/fulltext",
@@ -55,135 +55,25 @@ RSS_FEEDS: Final[tuple[str, ...]] = (
     "https://www.nature.com/nature.rss",
     "https://science.sciencemag.org/rss/current.xml",
     "https://www.nasa.gov/rss/dyn/breaking_news.rss",
-    "https://www.technologyreview.com/feed/",
     "https://arstechnica.com/feed/",
     "https://techcrunch.com/feed/",
-    # Business & Finance
-    # # "https://www.economist.com/feeds/latest/full.xml",
-    "https://www.ft.com/rss/home/international",
     "https://www.ft.com/rss/home",
     "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
-    # Investigative & Specialized
-    "https://www.propublica.org/feeds/propublica/main",
-    # # "https://feeds.revealnews.org/revealnews",
     "https://www.themarshallproject.org/rss/recent",
-    "https://www.politifact.com/rss/all/",
     "https://www.icij.org/feed/",
-    # # "https://www.transparency.org/news/feed",
-    # # "https://www.cfr.org/rss/current",
-    "https://www.bellingcat.com/feed/",
-    # Health & Environment
     "https://www.statnews.com/feed/",
     "https://www.sciencedaily.com/rss/all.xml",
     "https://insideclimatenews.org/feed/",
-    # Additional Trusted Sources
     "https://rss.csmonitor.com/feeds/all",
     "https://www.pbs.org/newshour/feeds/rss/headlines",
     "https://time.com/feed",
-    # 1 Trusted rss Source from each of the 50 US States
-    # Alabama
-    "https://www.al.com/arc/outboundfeeds/rss/?outputType=xml",
-    # Alaska
-    # "https://www.adiario.mx/feed/",
-    # Arizona
-    # # "https://www.azcentral.com/rss/",
-    # Arkansas
-    # # "https://www.arkansasonline.com/feed/",
-    # California
-    "https://www.latimes.com/index.rss",
-    # Colorado
-    "https://www.denverpost.com/feed/",
-    # Connecticut
-    # # "https://www.ctinsider.com/rss/",
-    # Delaware
-    # # "https://www.delawareonline.com/rss/",
-    # Florida
-    # # "https://www.miamiherald.com/latest-news/rss/",
-    # Georgia
-    # # "https://www.ajc.com/rss/",
-    # Hawaii
-    "https://www.staradvertiser.com/feed/",
-    # Idaho
-    # # "https://www.idahostatesman.com/latest-news/rss/",
-    # Illinois
-    "https://www.chicagotribune.com/rss",
-    "https://www.chicagotribune.com/rss.xml",
-    # Indiana
-    # # "https://www.indystar.com/rss/",
-    # Iowa
-    # # "https://www.desmoinesregister.com/rss/",
-    # Kansas
-    # # "https://www.kansas.com/latest-news/rss/",
-    # Kentucky
-    # # "https://www.courier-journal.com/rss/",
-    # Louisiana
-    "http://www.nola.com/news/podcasts/?f=rss&t=article&c=&l=50&s=start_time&sd=desc",
-    # Maine
-    "https://www.pressherald.com/feed/",
-    # Maryland
-    "https://www.baltimoresun.com/feed/",
-    # Massachusetts
-    # # "https://www.bostonglobe.com/rss/",
-    # Michigan
-    # # "https://www.freep.com/rss/",
-    # Minnesota
-    "https://www.startribune.com/rss/",
-    # Mississippi
-    # # "https://www.clarionledger.com/rss/",
-    # Missouri
-    "http://www.stltoday.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # Montana
-    "https://billingsgazette.com/feeds",
-    # Nebraska
-    # "http://omaha.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # Nevada
-    # "https://www.youtube.com/feeds/videos.xml?channel_id=UCo30hbSt6D9z2ObnR4Goo0A",
-    # New Hampshire
-    # # "https://www.unionleader.com/rss",
-    # New Jersey
-    "https://www.nj.com/arc/outboundfeeds/rss/?outputType=xml",
-    # New Mexico
-    "http://www.abqjournal.com/search/?f=rss&t=article&c=news&l=50&s=start_time&sd=desc",
-    # New York
-    "https://www.nytimes.com/svc/collections/v1/publish/www.nytimes.com/section/nyregion/rss.xml",
-    # North Carolina
-    # # "https://www.newsobserver.com/latest-news/rss/",
-    # North Dakota
-    "http://bismarcktribune.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # Ohio
-    # # "https://www.dispatch.com/arc/outboundfeeds/rss/",
-    # Oklahoma
-    # # "https://www.oklahoman.com/feed/",
-    # Oregon
-    "https://www.oregonlive.com/arc/outboundfeeds/rss/",
-    # Pennsylvania
-    # # "https://www.inquirer.com/arc/outboundfeeds/rss/",
-    # Rhode Island
-    # # "https://www.providencejournal.com/arc/outboundfeeds/rss/",
-    # South Carolina
-    "https://www.postandcourier.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # South Dakota
-    "http://rapidcityjournal.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # Tennessee
-    # # "https://www.tennessean.com/rss/",
-    # Texas
-    # # "https://www.dallasnews.com/feed/",
-    # Utah
-    "https://www.sltrib.com/arc/outboundfeeds/rss/?outputType=xml",
-    # Vermont
     "https://vtdigger.org/feed/",
-    # Virginia
-    "http://richmond.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
-    # Washington
     "https://www.seattletimes.com/feed/",
-    # West Virginia
-    "http://www.wvgazettemail.com/search/?f=rss&t=article&c=news&l=50&s=start_time&sd=desc",
-    # Wisconsin
-    # # "https://www.jsonline.com/rss/",
-    # Wyoming
-    "http://trib.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory",
 )
+
+# Combined list for backwards compatibility if needed
+RSS_FEEDS: Final[tuple[str, ...]] = HIGH_PRIORITY_FEEDS + SECONDARY_FEEDS
 
 
 def get_content_from_prioritized_feed(
@@ -281,21 +171,25 @@ def _fetch_one_feed_headlines(feed_url: str) -> list[str]:
 
 # --- main function to be concurrent ---
 def get_all_headlines_from_feeds() -> list[str]:
-    """Fetch headlines concurrently from a random subset of configured RSS feeds.
+    """Fetch headlines concurrently from a prioritized selection of RSS feeds.
 
-    This ensures that different nodes in the network process different sources,
-    preventing redundant work and reducing load on individual RSS providers.
+    Ensures that high-priority, high-signal feeds are always preferred while
+    maintaining diversity through random sampling of secondary sources.
     """
-    # Use a set to automatically handle any duplicate URLs, then convert to list for shuffling
-    unique_feed_urls = list(set(RSS_FEEDS))
-    random.shuffle(unique_feed_urls)
+    high_priority = list(HIGH_PRIORITY_FEEDS)
+    secondary = list(SECONDARY_FEEDS)
 
-    # Select only 5 random sources per cycle as requested
-    selected_feeds = unique_feed_urls[:5]
+    random.shuffle(high_priority)
+    random.shuffle(secondary)
+
+    # Take up to 3 from high priority and 2 from secondary to reach 5 total
+    selected_feeds = high_priority[:3] + secondary[:2]
+    random.shuffle(selected_feeds)  # Shuffle the final selection
+
     all_headlines: list[str] = []
 
     logger.info(
-        f"Fetching headlines from 5 random sources (out of {len(unique_feed_urls)} unique feeds)...",
+        f"Fetching headlines from {len(selected_feeds)} prioritized sources (High: {len(high_priority[:3])}, Secondary: {len(secondary[:2])})...",
     )
 
     # Use a ThreadPoolExecutor to run up to 5 requests (one per selected feed) at the same time.

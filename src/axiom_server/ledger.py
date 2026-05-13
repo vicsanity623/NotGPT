@@ -235,6 +235,28 @@ class Fact(Base):
         nullable=False,
     )
 
+    # --- Phase 2: Metadata for Atomic Facts ---
+    published_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    extraction_confidence: Mapped[float] = mapped_column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+    primary_source_url: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+    source_domain_reputation: Mapped[float] = mapped_column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+    entities_json: Mapped[str] = mapped_column(
+        Text,
+        default="[]",
+        nullable=False,
+    )
+
     sources: Mapped[list[Source]] = relationship(
         "Source",
         secondary="fact_source_link",
@@ -256,6 +278,11 @@ class Fact(Base):
             hash=model.hash,
             last_checked=model.last_checked,
             semantics=model.semantics.model_dump_json(),
+            published_date=model.published_date,
+            extraction_confidence=model.extraction_confidence,
+            primary_source_url=model.primary_source_url,
+            source_domain_reputation=model.source_domain_reputation,
+            entities_json=model.entities_json,
         )
 
     @property
@@ -313,6 +340,11 @@ class SerializedFact(BaseModel):
     last_checked: str
     semantics: SerializedSemantics
     sources: list[str]
+    published_date: str | None
+    extraction_confidence: float
+    primary_source_url: str | None
+    source_domain_reputation: float
+    entities_json: str
 
     @classmethod
     def from_fact(cls, fact: Fact) -> Self:
@@ -325,6 +357,11 @@ class SerializedFact(BaseModel):
             last_checked=fact.last_checked,
             semantics=fact.get_serialized_semantics(),
             sources=[source.domain for source in fact.sources],
+            published_date=fact.published_date,
+            extraction_confidence=fact.extraction_confidence,
+            primary_source_url=fact.primary_source_url,
+            source_domain_reputation=fact.source_domain_reputation,
+            entities_json=fact.entities_json,
         )
 
 
@@ -620,3 +657,25 @@ class Proposal(TypedDict):
     text: str
     proposer: str
     votes: dict[str, Votes]
+
+
+def export_ledger_to_jsonl(session: Session, output_path: str) -> int:
+    """Export all non-disputed facts and their metadata to a JSONL file.
+
+    Args:
+        session: The SQLAlchemy session to use.
+        output_path: Path to the output file.
+
+    Returns:
+        The number of facts exported.
+
+    """
+    facts = session.query(Fact).filter(Fact.disputed == False).all()  # noqa: E712
+    count = 0
+    with open(output_path, "w") as f:
+        for fact in facts:
+            data = SerializedFact.from_fact(fact).model_dump()
+            f.write(json.dumps(data) + "\n")
+            count += 1
+    logger.info(f"Exported {count} facts to {output_path}")
+    return count

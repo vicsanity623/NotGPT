@@ -5,6 +5,7 @@ from __future__ import annotations
 # Copyright (C) 2025 The Axiom Contributors
 # This program is licensed under the Peer Production License (PPL).
 # See the LICENSE file for full details.
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -181,18 +182,16 @@ class Pipeline(Generic[T]):
     def run(self, value: T) -> T | None:
         """Run pipeline."""
         # Using a slice to prevent huge objects from filling the logs
-        logger.info(f"running pipeline '{self.name}' on '%.200s'", value)
         current_value: T | None = value
         for step in self.steps:
             if current_value is None:
-                logger.info(
-                    f"pipeline '{self.name}' halted as value became None.",
-                )
+                # logger.debug(f"pipeline '{self.name}' halted as value became None.")
                 break
             if isinstance(step, Check):
                 if not step.run(current_value):
-                    logger.info(
-                        f"pipeline '{self.name}' stopped by check: {step.description}",
+                    logger.debug(
+                        f"[{self.name}] REJECTED: {step.description} for '%.100s...'",
+                        str(current_value),
                     )
                     return None
             elif isinstance(step, Transformation):
@@ -202,10 +201,6 @@ class Pipeline(Generic[T]):
                     error_string = f"transformation error in '{self.name}' on step '{step.description}' ({exc})"
                     logger.exception(error_string)
                     raise CrucibleError(error_string) from exc
-        logger.info(
-            f"pipeline '{self.name}' finished, returning '%.200s'",
-            current_value,
-        )
         return current_value
 
 
@@ -236,15 +231,35 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
     [
         Check(
             lambda sent: len(sent.text.split()) >= 8,
-            "sentence minimal length",
+            "sentence minimal length (< 8 words)",
         ),
         Check(
             lambda sent: len(sent.text.split()) <= 100,
-            "sentence maximal length",
+            "sentence maximal length (> 100 words)",
         ),
         Check(
-            lambda sent: len(sent.ents) > 0,
-            "sentence must contain entities",
+            lambda sent: any(
+                ent.label_
+                in {"PERSON", "ORG", "GPE", "NORP", "FAC", "EVENT", "LAW"}
+                for ent in sent.ents
+            ),
+            "missing core named entities (PERSON, ORG, GPE, etc.)",
+        ),
+        Check(
+            lambda sent: any(
+                ent.label_
+                in {
+                    "DATE",
+                    "TIME",
+                    "PERCENT",
+                    "MONEY",
+                    "QUANTITY",
+                    "ORDINAL",
+                    "CARDINAL",
+                }
+                for ent in sent.ents
+            ),
+            "missing high-value atomic data (numbers, dates, percentages, etc.)",
         ),
         Check(
             lambda sent: (
@@ -253,7 +268,7 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
                     for indicator in SUBJECTIVITY_INDICATORS
                 )
             ),
-            "sentence is objective (does not contain subjective wording)",
+            "subjectivity detected (opinion/bias indicators)",
         ),
         Check(
             lambda sent: (
@@ -266,7 +281,7 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
                 )
                 >= 3
             ),
-            "sentence must contain at least 3 unique common English words (heuristic check)",
+            "insufficient English fluency (heuristic check)",
         ),
     ],
 )
@@ -312,17 +327,29 @@ SEMANTICS_CHECKS = Pipeline(
 FACT_PREANALYSIS: Pipeline[Fact] = Pipeline("Fact Preanalysis", [])
 
 
-def extract_facts_from_text(text_content: str) -> list[Fact]:
+def extract_facts_from_text(
+    text_content: str,
+    source_url: str | None = None,
+    published_date: str | None = None,
+) -> list[Fact]:
     """Return list of Facts from text content using semantic analysis."""
     sanitized_text = TEXT_SANITIZATION.run(text_content)
     if not sanitized_text:
-        logger.info(
+        logger.debug(
             "text sanitizer rejected input content, returning no facts",
         )
         return []
 
     doc = NLP_MODEL(sanitized_text)
     facts: list[Fact] = []
+
+    # Optional: Load NLI classifier for zero-shot claim strength
+    nli = None
+    try:
+        nli = get_nli_classifier()
+    except Exception as exc:
+        logger.warning(f"NLI classifier unavailable for claim scoring: {exc}")
+
     for sentence in doc.sents:
         clean_sentence_text = sentence.text.strip()
         for pattern in METADATA_NOISE_PATTERNS:
@@ -334,7 +361,41 @@ def extract_facts_from_text(text_content: str) -> list[Fact]:
         if (
             checked_sentence := SENTENCE_CHECKS.run(clean_sentence_span)
         ) is not None:
-            fact = Fact(content=checked_sentence.text.strip())
+            # --- Phase 2: Claim Scoring ---
+            confidence = 0.5  # Default
+            if nli:
+                try:
+                    result = nli(
+                        checked_sentence.text,
+                        candidate_labels=[
+                            "verifiable claim",
+                            "opinion",
+                            "background",
+                        ],
+                        hypothesis_template="This statement is a {}.",
+                    )
+                    # If it's mostly opinion or background, we might want to skip or lower confidence
+                    label = result["labels"][0]
+                    score = result["scores"][0]
+
+                    if label != "verifiable claim":
+                        logger.debug(
+                            f"Sentence rejected as {label} ({score:.2f}): {checked_sentence.text[:50]}...",
+                        )
+                        continue
+                    confidence = float(score)
+                except Exception as e:
+                    logger.warning(f"Error during NLI scoring: {e}")
+
+            fact = Fact(
+                content=checked_sentence.text.strip(),
+                primary_source_url=source_url,
+                published_date=published_date,
+                extraction_confidence=confidence,
+                entities_json=json.dumps(
+                    [ent.text for ent in checked_sentence.ents],
+                ),
+            )
             semantics = Semantics(
                 {
                     "doc": checked_sentence.as_doc(),

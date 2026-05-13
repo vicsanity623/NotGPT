@@ -69,7 +69,8 @@ class FactIndexer:
         self.fact_id_to_content[fact.id] = fact.content
         self.fact_id_to_hash[fact.id] = fact.hash
         self.fact_id_to_vector[fact.id] = cast(
-            "np.ndarray[Any, Any]", fact_vector,
+            "np.ndarray[Any, Any]",
+            fact_vector,
         )
         self.fact_ids.append(fact.id)
 
