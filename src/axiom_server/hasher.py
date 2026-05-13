@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from sqlalchemy import or_
@@ -49,9 +49,9 @@ class FactIndexer:
         # A dictionary to map a unique fact ID to its unique SHA-256 hash.
         self.fact_id_to_hash: dict[int, str] = {}
         # A dictionary to map that same fact ID to its numerical vector.
-        self.fact_id_to_vector = {}
+        self.fact_id_to_vector: dict[int, np.ndarray] = {}
         # A list to hold all the vectors for fast searching.
-        self.vector_matrix = None
+        self.vector_matrix: np.ndarray | None = None
         # A list to keep track of the order of fact IDs corresponding to the matrix rows.
         self.fact_ids: list[int] = []
 
@@ -73,7 +73,7 @@ class FactIndexer:
 
         # 3. Add the new vector to our NumPy matrix
         # Reshape the vector to be a row (1, 300) instead of a flat array (300,)
-        new_vector_row = fact_vector.reshape(1, -1)
+        new_vector_row = np.array(fact_vector).reshape((1, -1))
 
         if self.vector_matrix is None:
             # If this is the first fact, the matrix is just this one row.
@@ -109,7 +109,7 @@ class FactIndexer:
             # Create a vector for the fact's content using the large spaCy model.
             # The .vector attribute provides the semantic representation of the text.
             doc = NLP_MODEL(fact.content)
-            self.fact_id_to_vector[fact.id] = doc.vector
+            self.fact_id_to_vector[fact.id] = np.array(doc.vector)
 
             # Keep track of the fact ID.
             self.fact_ids.append(fact.id)
@@ -129,7 +129,7 @@ class FactIndexer:
         self,
         query_text: str,
         top_n: int = 3,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Perform a HYBRID search.
 
         1. Extracts keywords from the query.
@@ -185,12 +185,15 @@ class FactIndexer:
                 self.fact_ids.index(fid) for fid in valid_candidate_ids
             ]
 
+        if self.vector_matrix is None:
+            return[]
+
         # Create a smaller matrix with only the vectors of our candidate facts.
         candidate_matrix = self.vector_matrix[candidate_indices, :]
 
         # --- Step 3 & 4: Vectorize Query and Compare ---
         query_doc = NLP_MODEL(query_text)
-        query_vector = query_doc.vector
+        query_vector = np.array(query_doc.vector)
 
         # Perform the fast vector math, but ONLY on the small candidate_matrix.
         dot_products = np.dot(candidate_matrix, query_vector)
