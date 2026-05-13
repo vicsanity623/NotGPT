@@ -113,7 +113,8 @@ def get_content_from_prioritized_feed(
                 source_url = entry.get("link")
                 content = entry.get("summary", entry.get("description", ""))
                 published_date = entry.get(
-                    "published", entry.get("updated", ""),
+                    "published",
+                    entry.get("updated", ""),
                 )
                 if source_url and content:
                     content_list.append(

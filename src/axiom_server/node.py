@@ -496,6 +496,27 @@ class AxiomNode(P2PBaseNode):
                                     published_date=item.get("published_date"),
                                 )
                                 for fact in new_facts:
+                                    fact.set_hash()
+                                    # Check for existing fact with the same hash
+                                    existing_fact = (
+                                        session.query(Fact)
+                                        .filter(Fact.hash == fact.hash)
+                                        .one_or_none()
+                                    )
+
+                                    if existing_fact:
+                                        background_thread_logger.info(
+                                            f"Found duplicate fact {fact.hash[:8]}, corroborating instead of inserting.",
+                                        )
+                                        if source not in existing_fact.sources:
+                                            existing_fact.sources.append(
+                                                source,
+                                            )
+                                            existing_fact.score += 1
+                                        session.commit()
+                                        continue
+
+                                    # If not a duplicate, proceed with adding
                                     fact.sources.append(source)
                                     fact.source_domain_reputation = reputation
                                     session.add(fact)

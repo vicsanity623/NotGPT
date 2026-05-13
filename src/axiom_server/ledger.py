@@ -221,7 +221,13 @@ class Fact(Base):
         default=False,
         nullable=False,
     )
-    hash: Mapped[str] = mapped_column(String, default="", nullable=False)
+    hash: Mapped[str] = mapped_column(
+        String,
+        default="",
+        nullable=False,
+        unique=True,
+        index=True,
+    )
     last_checked: Mapped[str] = mapped_column(
         String,
         default=lambda: datetime.datetime.now(
@@ -562,14 +568,31 @@ def insert_uncorroborated_fact(
     content: str,
     source_id: int,
 ) -> None:
-    """Insert a fact for the first time. The source must exist."""
+    """Insert a fact for the first time or corroborates it if it already exists. The source must exist."""
     source = session.get(Source, source_id)
     if source is None:
         raise LedgerError(f"source not found: {source_id=}")
-    fact = Fact(content=content, score=0, sources=[source])
-    fact.set_hash()
+
+    # Calculate hash to check for existence
+    temp_fact = Fact(content=content)
+    fact_hash = temp_fact.set_hash()
+
+    existing_fact = (
+        session.query(Fact).filter(Fact.hash == fact_hash).one_or_none()
+    )
+    if existing_fact:
+        if source not in existing_fact.sources:
+            existing_fact.sources.append(source)
+            # Since it's a new source for an existing fact, we increment score
+            existing_fact.score += 1
+            logger.info(
+                f"corroborated existing fact {existing_fact.id} via insert_uncorroborated_fact",
+            )
+        return
+
+    fact = Fact(content=content, score=0, sources=[source], hash=fact_hash)
     session.add(fact)
-    logger.info(f"inserted uncorroborated fact {fact.id=}")
+    logger.info(f"inserted new fact {fact.id=}")
 
 
 def insert_relationship(
