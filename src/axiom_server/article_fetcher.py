@@ -43,9 +43,23 @@ def fetch_article_text(url: str, timeout: int = 15) -> str | None:
 
     """
     try:
+        # Mimic a real browser to avoid 404/403 stealth blocks from WAFs (Cloudflare/Akamai)
         headers = {
-            "User-Agent": "AxiomEngine/1.0 (Decentralized Truth Discovery; +https://axiom.ai)",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.google.com/",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
         }
+
+        # Jitter: wait a random short time to avoid being flagged as a bursty bot
+        import random
+        import time
+
+        time.sleep(random.uniform(1.0, 3.0))  # noqa: S311
+
         response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
 
