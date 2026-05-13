@@ -3,6 +3,7 @@
 # Each node operator will generate their own.
 axiom_ledger.db
 *.db
+!docs/ledger.db
 
 # Temp file during Mypy processing
 mypy_annotate.dat
