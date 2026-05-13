@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: false
 
 on:
-  workflow_dispatch: # Allows you to start it manually
+  workflow_dispatch:
 
 jobs:
   evolve:
@@ -25,14 +25,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Target Repo Dependencies (NotGPT)
+        run: |
+          pip install uv
+          uv sync --extra tests --extra tools
+
       - name: Install PyOB Engine
         run: |
-          # THE KEY CHANGE: Install PyOB directly from your main repository
           pip install git+https://github.com/vicsanity623/PyOB.git
-          
-          # Install necessary runtime dependencies
           pip install flask blinker click itsdangerous jinja2 markupsafe werkzeug
-          pip install ruff mypy pytest types-requests types-chardet
 
       - name: Run PyOB Service
         env:
@@ -43,11 +44,10 @@ jobs:
           git config --global user.email "pyob-bot@users.noreply.github.com"
           git config --global user.name "pyob-bot"
           
-          # 1. Start the SSH Tunnel (Optional, but good for HUD)
           ssh -o StrictHostKeyChecking=no -R 80:localhost:5000 a.pinggy.io "printf 'keepalive'" > tunnel.log 2>&1 &
           sleep 10
           
-          # 2. Launch the bot against the current directory (.)
+          source .venv/bin/activate
           pyob . --iterations 2
           
           echo "=================================================="
