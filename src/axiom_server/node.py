@@ -34,6 +34,7 @@ from axiom_server.ledger import (
     Block,
     Fact,
     FactLink,
+    FactStatus,
     Proposal,
     SerializedFact,
     Source,
@@ -446,7 +447,7 @@ class AxiomNode(P2PBaseNode):
                                     session,
                                 )
                                 if len(claims) >= CORROBORATION_THRESHOLD:
-                                    fact.status = "corroborated"
+                                    fact.status = FactStatus.CORROBORATED
                                     background_thread_logger.debug(
                                         f"Fact '{fact.hash[:8]}' has been corroborated with {len(claims)} pieces of evidence.",
                                     )

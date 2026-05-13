@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from sqlalchemy import or_
@@ -49,9 +49,9 @@ class FactIndexer:
         # A dictionary to map a unique fact ID to its unique SHA-256 hash.
         self.fact_id_to_hash: dict[int, str] = {}
         # A dictionary to map that same fact ID to its numerical vector.
-        self.fact_id_to_vector: dict[int, np.ndarray] = {}
+        self.fact_id_to_vector: dict[int, np.ndarray[Any, Any]] = {}
         # A list to hold all the vectors for fast searching.
-        self.vector_matrix: np.ndarray | None = None
+        self.vector_matrix: np.ndarray[Any, Any] | None = None
         # A list to keep track of the order of fact IDs corresponding to the matrix rows.
         self.fact_ids: list[int] = []
 
@@ -68,7 +68,9 @@ class FactIndexer:
         # 2. Update our dictionaries and lists
         self.fact_id_to_content[fact.id] = fact.content
         self.fact_id_to_hash[fact.id] = fact.hash
-        self.fact_id_to_vector[fact.id] = fact_vector
+        self.fact_id_to_vector[fact.id] = cast(
+            "np.ndarray[Any, Any]", fact_vector,
+        )
         self.fact_ids.append(fact.id)
 
         # 3. Add the new vector to our NumPy matrix
@@ -186,7 +188,7 @@ class FactIndexer:
             ]
 
         if self.vector_matrix is None:
-            return[]
+            return []
 
         # Create a smaller matrix with only the vectors of our candidate facts.
         candidate_matrix = self.vector_matrix[candidate_indices, :]
