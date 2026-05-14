@@ -257,7 +257,7 @@ class AxiomNode(P2PBaseNode):
         data: dict[str, Any],
     ) -> None:
         """Send an application-level message to a specific peer."""
-        message = Message.application_data(json.dumps(data))
+        message: Message = Message.application_data(json.dumps(data))
         self._send_message(link, message)
 
     def _proactive_sync(self) -> None:
