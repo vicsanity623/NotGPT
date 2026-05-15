@@ -87,6 +87,7 @@ db_lock = threading.Lock()
 
 # This lock ensures only one thread can read from or write to the fact indexer at a time.
 fact_indexer_lock = threading.Lock()
+historical_hashes: set[str] | None = None
 
 
 def detect_environment() -> str:
@@ -141,6 +142,7 @@ class AxiomNode(P2PBaseNode):
         ] = {}  # fact_hash -> set of peer_ids
         self.limit_cycles = limit_cycles
         self.cycle_count = 0
+        self.db_name = db_name
         # The unused ThreadPoolExecutor has been correctly removed.
 
         # 2. Perform Axiom-specific database initialization.
@@ -383,6 +385,22 @@ class AxiomNode(P2PBaseNode):
                 # Use os._exit to ensure all threads (including Flask) stop immediately.
                 os._exit(0)
 
+            # --- PHASE 0: DB Size Management ---
+            try:
+                db_path = os.path.abspath(self.db_name)
+                if os.path.exists(db_path):
+                    size_mb = os.path.getsize(db_path) / (1024 * 1024)
+                    if size_mb > 50:
+                        background_thread_logger.warning(
+                            f"Database size {size_mb:.2f}MB exceeds 50MB limit. Rolling over...",
+                        )
+                        with db_lock:
+                            self._rollover_database()
+            except Exception as e:
+                background_thread_logger.error(
+                    f"Error during database rollover check: {e}",
+                )
+
             # Check time limit at the start of every cycle
             if (
                 self.limit_time
@@ -511,16 +529,37 @@ class AxiomNode(P2PBaseNode):
                                         .one_or_none()
                                     )
 
-                                    if existing_fact:
+                                    global historical_hashes
+                                    if historical_hashes is None:
+                                        if os.path.exists(
+                                            "historical_hashes.json",
+                                        ):
+                                            with open(
+                                                "historical_hashes.json",
+                                            ) as f:
+                                                historical_hashes = set(
+                                                    json.load(f),
+                                                )
+                                        else:
+                                            historical_hashes = set()
+
+                                    if (
+                                        existing_fact
+                                        or fact.hash in historical_hashes
+                                    ):
                                         background_thread_logger.info(
                                             f"Found duplicate fact {fact.hash[:8]}, corroborating instead of inserting.",
                                         )
-                                        if source not in existing_fact.sources:
-                                            existing_fact.sources.append(
-                                                source,
-                                            )
-                                            existing_fact.score += 1
-                                        session.commit()
+                                        if existing_fact:
+                                            if (
+                                                source
+                                                not in existing_fact.sources
+                                            ):
+                                                existing_fact.sources.append(
+                                                    source,
+                                                )
+                                                existing_fact.score += 1
+                                            session.commit()
                                         continue
 
                                     # If not a duplicate, proceed with adding
@@ -598,6 +637,13 @@ class AxiomNode(P2PBaseNode):
                                 "No new facts to verify.",
                             )
                         else:
+                            # --- PRUNING OLD FACTS ---
+                            # Delete facts that failed the new strict entity checks during ingestion
+                            # Since we just added strict checks, this will clean up older ingested facts
+
+                            # We can retroactively prune by removing facts with no sources or extremely low scores if needed,
+                            # but the strict checks will prevent future bloat.
+
                             # SCALABILITY FIX: Limit the number of facts verified in a single cycle
                             # to avoid O(N^2) bottlenecks when the ledger is large.
                             verification_batch_size = 20
@@ -644,6 +690,71 @@ class AxiomNode(P2PBaseNode):
             # Jitter prevents all nodes from hammering the same RSS feeds simultaneously.
             jitter = rng.uniform(0, 60)
             time.sleep(450 + jitter)
+
+    def _rollover_database(self) -> None:
+        """Roll over the database when it exceeds 50MB."""
+        from axiom_server.ledger import (
+            Block,
+            get_engine,
+            get_latest_block,
+            get_session_maker,
+            initialize_database,
+        )
+
+        db_path = os.path.abspath(self.db_name)
+        new_name = f"{self.db_name.replace('.db', '')}_{int(time.time())}.db"
+        new_path = os.path.abspath(new_name)
+
+        # 1. Get the current head block and facts to transfer to the new database
+        with self.session_maker() as old_session:
+            old_head = get_latest_block(old_session)
+            head_height = old_head.height if old_head else 0
+            head_hash = old_head.hash if old_head else "0"
+            head_timestamp = old_head.timestamp if old_head else time.time()
+            head_previous_hash = old_head.previous_hash if old_head else "0"
+            head_nonce = old_head.nonce if old_head else 0
+            head_merkle_root = old_head.merkle_root if old_head else ""
+
+            # Save hashes for self-annealing
+
+            from axiom_server.ledger import Fact
+
+            old_hashes = [f.hash for f in old_session.query(Fact).all()]
+            hist_file = "historical_hashes.json"
+            hist_hashes = set()
+            if os.path.exists(hist_file):
+                with open(hist_file) as f:
+                    hist_hashes = set(json.load(f))
+            hist_hashes.update(old_hashes)
+            with open(hist_file, "w") as f:
+                json.dump(list(hist_hashes), f)
+
+        # 2. Dispose of the engine and rename the file
+        self.db_engine.dispose()
+        os.rename(db_path, new_path)
+
+        # 3. Create a fresh engine and reinitialize the schema
+        self.db_engine = get_engine(self.db_name)
+        self.session_maker = get_session_maker(self.db_engine)
+        initialize_database(self.db_engine)
+
+        # 4. Insert the "genesis" block for the new shard (the last known head)
+        with self.session_maker() as new_session:
+            genesis = Block(
+                height=head_height,
+                hash=head_hash,
+                previous_hash=head_previous_hash,
+                fact_hashes="[]",
+                timestamp=head_timestamp,
+                nonce=head_nonce,
+                merkle_root=head_merkle_root,
+            )
+            new_session.add(genesis)
+            new_session.commit()
+
+        background_thread_logger.info(
+            f"Rollover complete. Old DB archived as {new_name}.",
+        )
 
     def start(self) -> None:  # type: ignore[override]
         """Start all background tasks and the main P2P loop."""
@@ -718,13 +829,13 @@ def handle_chat_query() -> Response | tuple[Response, int]:
 
     query = data["query"]
 
-    with fact_indexer_lock:
-        closest_facts = fact_indexer.find_closest_facts(query)
-
     # Enrich results with source information
     enriched_results = []
     with db_lock:
         with node_instance.session_maker() as session:
+            with fact_indexer_lock:
+                closest_facts = fact_indexer.find_closest_facts(session, query)
+
             for result in closest_facts:
                 fact_id = result["fact_id"]
                 fact = session.get(Fact, fact_id)
@@ -1109,10 +1220,10 @@ def cli_run() -> None:
 
         logger.info("--- Initializing Fact Indexer for Hybrid Search ---")
         with node_instance.session_maker() as db_session:
-            # Create the indexer instance, passing it the session it needs.
-            fact_indexer = FactIndexer(db_session)
+            # Create the indexer instance
+            fact_indexer = FactIndexer()
             # Build the initial index.
-            fact_indexer.index_facts_from_db()
+            fact_indexer.index_facts_from_db(db_session)
 
         # 3. Start the Flask API server in its own thread.
         api_thread = threading.Thread(

@@ -52,8 +52,62 @@ def semantic_search_ledger(
         return []
 
     query_vector = NLP_MODEL(sanitized_term).vector
-    all_fact_vectors = session.query(FactVector).all()
+
+    import glob
+    import os
+
+    from sqlalchemy.orm import joinedload
+
+    from axiom_server.ledger import get_engine, get_session_maker
+
+    bind = session.get_bind()
+    db_path = None
+    if hasattr(bind, "url"):
+        db_path = bind.url.database
+    elif hasattr(bind, "engine") and hasattr(bind.engine, "url"):
+        db_path = bind.engine.url.database
+
+    if not db_path:
+        return []
+
+    db_dir = os.path.dirname(os.path.abspath(db_path)) or "."
+    base_name = os.path.basename(db_path)
+    prefix = base_name.replace(".db", "")
+    all_dbs = glob.glob(os.path.join(db_dir, f"{prefix}*.db"))
+
+    all_fact_vectors = []
+    engines_to_dispose = []
+
+    # Gather vectors from all shards
+    for db_file in all_dbs:
+        if os.path.abspath(db_file) == os.path.abspath(db_path):
+            vectors = (
+                session.query(FactVector)
+                .options(joinedload(FactVector.fact).joinedload(Fact.sources))
+                .all()
+            )
+            all_fact_vectors.extend(vectors)
+        else:
+            shard_engine = get_engine(db_file)
+            shard_session_maker = get_session_maker(shard_engine)
+            shard_session = shard_session_maker()
+            try:
+                vectors = (
+                    shard_session.query(FactVector)
+                    .options(
+                        joinedload(FactVector.fact).joinedload(Fact.sources),
+                    )
+                    .all()
+                )
+                all_fact_vectors.extend(vectors)
+                shard_session.expunge_all()
+            finally:
+                shard_session.close()
+            engines_to_dispose.append(shard_engine)
+
     if not all_fact_vectors:
+        for engine in engines_to_dispose:
+            engine.dispose()
         return []
 
     scored_facts = []
@@ -85,6 +139,11 @@ def semantic_search_ledger(
         }
 
         # Filter the top semantic results by our desired quality level
-        return [fact for fact in top_facts if fact.status in valid_statuses]
+        results = [fact for fact in top_facts if fact.status in valid_statuses]
+        for engine in engines_to_dispose:
+            engine.dispose()
+        return results
     except (ValueError, IndexError):
+        for engine in engines_to_dispose:
+            engine.dispose()
         return []  # Return empty if an invalid status is requested

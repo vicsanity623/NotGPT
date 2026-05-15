@@ -277,6 +277,24 @@ SENTENCE_CHECKS: Pipeline[Span] = Pipeline(
         ),
         Check(
             lambda sent: (
+                any(ent.label_ in {"PERSON", "ORG"} for ent in sent.ents)
+                and any(
+                    ent.label_ in {"GPE", "LOC", "FAC"} for ent in sent.ents
+                )
+                and any(ent.label_ in {"DATE", "TIME"} for ent in sent.ents)
+            ),
+            "missing required entities (who/what, where, when)",
+        ),
+        Check(
+            lambda sent: any(
+                token.dep_ in {"mark", "advcl", "prep"}
+                or token.lower_ in {"because", "due", "led", "result"}
+                for token in sent
+            ),
+            "missing causal or contextual depth (how/why)",
+        ),
+        Check(
+            lambda sent: (
                 not any(
                     indicator in sent.text.lower()
                     for indicator in SUBJECTIVITY_INDICATORS
@@ -536,7 +554,7 @@ class CrucibleFactAdder:
         )
         if pipeline.run(fact):
             # --- MODIFICATION 2: If pipeline succeeds, add to index ---
-            self.fact_indexer.add_fact(fact)
+            self.fact_indexer.add_fact(self.session, fact)
         self.session.commit()
 
     @staticmethod

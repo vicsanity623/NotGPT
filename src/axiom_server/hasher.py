@@ -41,9 +41,8 @@ def _extract_keywords(query_text: str, max_keywords: int = 5) -> list[str]:
 class FactIndexer:
     """A simple class to hold our indexed data."""
 
-    def __init__(self, session: Session) -> None:
-        """Initialize the indexer with a database session."""
-        self.session = session  # This session will be used for pre-filtering
+    def __init__(self) -> None:
+        """Initialize the indexer without a persistent database session."""
         # A dictionary to map a unique fact ID to its text content.
         self.fact_id_to_content: dict[int, str] = {}
         # A dictionary to map a unique fact ID to its unique SHA-256 hash.
@@ -55,7 +54,7 @@ class FactIndexer:
         # A list to keep track of the order of fact IDs corresponding to the matrix rows.
         self.fact_ids: list[int] = []
 
-    def add_fact(self, fact: Fact) -> None:
+    def add_fact(self, session: Session, fact: Fact) -> None:
         """Add a single, new fact to the live index in memory."""
         if fact.id in self.fact_ids:
             logger.info(f"Fact {fact.id} is already indexed. Skipping.")
@@ -78,7 +77,7 @@ class FactIndexer:
         from axiom_server.ledger import FactVector
 
         existing_vec = (
-            self.session.query(FactVector)
+            session.query(FactVector)
             .filter(FactVector.fact_id == fact.id)
             .one_or_none()
         )
@@ -87,8 +86,8 @@ class FactIndexer:
                 fact_id=fact.id,
                 vector=np.array(fact_vector, dtype=np.float32).tobytes(),
             )
-            self.session.add(new_vec_row)
-            self.session.commit()
+            session.add(new_vec_row)
+            # DO NOT session.commit() here; let the caller control the transaction
 
         # 4. Add the new vector to our NumPy matrix
         # Reshape the vector to be a row (1, 300) instead of a flat array (300,)
@@ -107,13 +106,13 @@ class FactIndexer:
             f"Successfully added Fact ID {fact.id} to the live chat index and database.",
         )
 
-    def index_facts_from_db(self) -> None:
+    def index_facts_from_db(self, session: Session) -> None:
         """Read all non-disputed facts from the database and builds the index."""
         logger.info("Starting to index facts from the ledger...")
 
         # Query the database for all proven, non-disputed facts.
         facts_to_index = (
-            self.session.query(Fact).filter(Fact.disputed == False).all()  # noqa: E712
+            session.query(Fact).filter(Fact.disputed == False).all()  # noqa: E712
         )
 
         if not facts_to_index:
@@ -129,7 +128,7 @@ class FactIndexer:
 
             # Check if we already have the vector in the DB
             vec_obj = (
-                self.session.query(FactVector)
+                session.query(FactVector)
                 .filter(FactVector.fact_id == fact.id)
                 .one_or_none()
             )
@@ -146,13 +145,13 @@ class FactIndexer:
                     fact_id=fact.id,
                     vector=fact_vector.tobytes(),
                 )
-                self.session.add(new_vec_row)
+                session.add(new_vec_row)
 
             self.fact_id_to_vector[fact.id] = fact_vector
             # Keep track of the fact ID.
             self.fact_ids.append(fact.id)
 
-        self.session.commit()
+        session.commit()
 
         # For efficient searching, we stack all the individual vectors into one big
         # NumPy matrix (like a spreadsheet of numbers).
@@ -167,6 +166,7 @@ class FactIndexer:
 
     def find_closest_facts(
         self,
+        session: Session,
         query_text: str,
         top_n: int = 3,
     ) -> list[dict[str, Any]]:
@@ -190,7 +190,7 @@ class FactIndexer:
 
         # We only want to search through facts that are not disputed.
         pre_filtered_facts = (
-            self.session.query(Fact)
+            session.query(Fact)
             .filter(or_(*keyword_filters))
             .filter(Fact.disputed == False)  # noqa: E712
             .all()
