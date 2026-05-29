@@ -581,7 +581,7 @@ class CrucibleFactAdder:
         # This query is a significant improvement over loading all facts.
         query = self.session.query(Fact).filter(
             Fact.id != new_fact.id,
-            Fact.disputed == False,  # noqa: E712
+            Fact.disputed.is_(False),
         )
         # Add a filter for each entity to find potential matches
         from sqlalchemy import or_
