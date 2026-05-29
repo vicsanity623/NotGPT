@@ -780,7 +780,8 @@ class AxiomNode(P2PBaseNode):
         bootstrap_peer: str | None,
         db_name: str = "axiom_ledger.db",
         limit_cycles: int | None = None,
-        **kwargs: Any,
+        limit_time: int | None = None,
+        heartbeat_file: str | None = None,
     ) -> AxiomNode:
         """Create and initialize a complete AxiomNode.
 
@@ -796,8 +797,8 @@ class AxiomNode(P2PBaseNode):
             bootstrap_peer=bootstrap_peer,
             db_name=db_name,
             limit_cycles=limit_cycles,
-            limit_time=kwargs.get("limit_time"),
-            heartbeat_file=kwargs.get("heartbeat_file"),
+            limit_time=limit_time,
+            heartbeat_file=heartbeat_file,
         )
 
         # 3. Transfer the initialized P2P components to our instance.
