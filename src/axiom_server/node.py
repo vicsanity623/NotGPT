@@ -530,19 +530,21 @@ class AxiomNode(P2PBaseNode):
                                         .one_or_none()
                                     )
 
-                                    global historical_hashes
+                                    # Ensure historical_hashes is initialized thread-safely
                                     if historical_hashes is None:
-                                        if os.path.exists(
-                                            "historical_hashes.json",
-                                        ):
-                                            with open(
-                                                "historical_hashes.json",
-                                            ) as f:
-                                                historical_hashes = set(
-                                                    json.load(f),
-                                                )
-                                        else:
-                                            historical_hashes = set()
+                                        with fact_indexer_lock:
+                                            if historical_hashes is None:
+                                                if os.path.exists(
+                                                    "historical_hashes.json",
+                                                ):
+                                                    with open(
+                                                        "historical_hashes.json",
+                                                    ) as f:
+                                                        historical_hashes = (
+                                                            set(json.load(f))
+                                                        )
+                                                else:
+                                                    historical_hashes = set()
 
                                     if (
                                         existing_fact
