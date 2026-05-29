@@ -151,6 +151,7 @@ class AxiomNode(P2PBaseNode):
         initialize_database(self.db_engine)
         with self.session_maker() as session:
             create_genesis_block(session)
+            session.commit()
 
         # 3. If a bootstrap peer URL is provided, connect in the background.
         if bootstrap_peer:
