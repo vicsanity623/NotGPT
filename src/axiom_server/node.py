@@ -151,6 +151,7 @@ class AxiomNode(P2PBaseNode):
         initialize_database(self.db_engine)
         with self.session_maker() as session:
             create_genesis_block(session)
+            session.commit()
 
         # 3. If a bootstrap peer URL is provided, connect in the background.
         if bootstrap_peer:
@@ -529,19 +530,21 @@ class AxiomNode(P2PBaseNode):
                                         .one_or_none()
                                     )
 
-                                    global historical_hashes
+                                    # Ensure historical_hashes is initialized thread-safely
                                     if historical_hashes is None:
-                                        if os.path.exists(
-                                            "historical_hashes.json",
-                                        ):
-                                            with open(
-                                                "historical_hashes.json",
-                                            ) as f:
-                                                historical_hashes = set(
-                                                    json.load(f),
-                                                )
-                                        else:
-                                            historical_hashes = set()
+                                        with fact_indexer_lock:
+                                            if historical_hashes is None:
+                                                if os.path.exists(
+                                                    "historical_hashes.json",
+                                                ):
+                                                    with open(
+                                                        "historical_hashes.json",
+                                                    ) as f:
+                                                        historical_hashes = (
+                                                            set(json.load(f))
+                                                        )
+                                                else:
+                                                    historical_hashes = set()
 
                                     if (
                                         existing_fact
@@ -777,7 +780,8 @@ class AxiomNode(P2PBaseNode):
         bootstrap_peer: str | None,
         db_name: str = "axiom_ledger.db",
         limit_cycles: int | None = None,
-        **kwargs: Any,
+        limit_time: int | None = None,
+        heartbeat_file: str | None = None,
     ) -> AxiomNode:
         """Create and initialize a complete AxiomNode.
 
@@ -793,8 +797,8 @@ class AxiomNode(P2PBaseNode):
             bootstrap_peer=bootstrap_peer,
             db_name=db_name,
             limit_cycles=limit_cycles,
-            limit_time=kwargs.get("limit_time"),
-            heartbeat_file=kwargs.get("heartbeat_file"),
+            limit_time=limit_time,
+            heartbeat_file=heartbeat_file,
         )
 
         # 3. Transfer the initialized P2P components to our instance.

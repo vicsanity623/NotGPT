@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QStatusBar,
     QTextEdit,
@@ -146,11 +148,24 @@ class AxiomClientApp(QWidget):
         self.status_bar.addPermanentWidget(self.block_height_label)
         self.status_bar.addPermanentWidget(self.version_label)
 
+        self.history_label = QLabel("History")
+        self.history_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        self.qv_box_layout.addWidget(self.history_label)
+
+        self.history_list = QListWidget()
+        self.history_list.setMaximumHeight(120)
+        self.history_list.setFont(QFont("Arial", 10))
+        self.history_list.itemClicked.connect(self._on_history_item_clicked)
+        self.qv_box_layout.addWidget(self.history_list)
+
+        self._query_history: list[str] = []
+
     def start_search(self) -> None:
         """Handle when the user clicks 'Search' or presses Enter. (Unchanged)."""
         query = self.query_input.text()
         if not query:
             return
+        self._add_to_history(query)
         self.search_button.setEnabled(False)
         self.results_output.setText("...")
         self.network_worker = NetworkWorker(query, node_url=self.server_url)
@@ -161,6 +176,22 @@ class AxiomClientApp(QWidget):
     def update_status(self, message: str) -> None:
         """Update the status label. (Unchanged)."""
         self.status_label.setText(f"Status: {message}")
+
+    def _add_to_history(self, query: str) -> None:
+        """Append a query to the in-memory history and update the UI list."""
+        if not query:
+            return
+        if self._query_history and self._query_history[-1] == query:
+            return
+        self._query_history.append(query)
+        self.history_list.addItem(query)
+        self.history_list.scrollToBottom()
+
+    def _on_history_item_clicked(self, item: QListWidgetItem) -> None:
+        """When a history entry is clicked, load it into the input and run the search."""
+        query = item.text()
+        self.query_input.setText(query)
+        self.start_search()
 
     # --- MODIFIED: The display logic is completely replaced with our conversational logic ---
     def display_results(self, response_obj: object) -> None:

@@ -179,3 +179,57 @@ def configure_logging(
     ]
     for name, lvl in silence_loggers:
         logging.getLogger(name).setLevel(lvl)
+
+
+def interactive_log_level() -> None:
+    """Launch a simple REPL to view and change the root log level."""
+    import shlex
+
+    level_map: dict[str, int] = {
+        "CRITICAL": logging.CRITICAL,
+        "ERROR": logging.ERROR,
+        "WARNING": logging.WARNING,
+        "INFO": logging.INFO,
+        "DEBUG": logging.DEBUG,
+        "NOTSET": logging.NOTSET,
+    }
+
+    root = logging.getLogger()
+    prompt: str = "(logctl) "
+
+    while True:
+        try:
+            raw: str = input(prompt)
+        except (KeyboardInterrupt, EOFError):
+            print()
+            break
+
+        try:
+            args: list[str] = shlex.split(raw, posix=True)
+        except ValueError as exc:
+            print(f"Error parsing input: {exc}")
+            continue
+
+        if not args:
+            continue
+
+        cmd: str = args[0].lower()
+        if cmd in {"quit", "exit"}:
+            break
+        if cmd == "show":
+            lvl: int = root.level
+            name: str = logging.getLevelName(lvl)
+            print(f"Current root level: {name} ({lvl})")
+        elif cmd == "list":
+            print("Available levels:")
+            for name, val in level_map.items():
+                print(f"  {name:8} â {val}")
+        elif cmd == "set" and len(args) == 2:
+            level_name: str = args[1].upper()
+            if level_name in level_map:
+                root.setLevel(level_map[level_name])
+                print(f"Root level set to {level_name}")
+            else:
+                print(f"Unknown level: {level_name}")
+        else:
+            print(f"Unknown command: {cmd}")

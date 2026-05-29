@@ -123,7 +123,7 @@ class Block(Base):
         default="",
     )
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: object) -> None:
         """Initialize Block."""
         super().__init__(**kwargs)
         self.nonce = self.nonce or 0

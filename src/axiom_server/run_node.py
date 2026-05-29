@@ -2,8 +2,13 @@
 
 import logging
 import os
+import sys
 from argparse import ArgumentParser
+from pathlib import Path
 from typing import Final
+
+# Ensure src is in path for local execution
+sys.path.append(str(Path(__file__).parent.parent.absolute()))
 
 from pydantic import BaseModel
 

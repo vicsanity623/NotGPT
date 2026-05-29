@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Final, Generic, TypeVar
 
 # Third-party imports for HTML parsing
 from bs4 import BeautifulSoup
+from sqlalchemy import or_
 
 from axiom_server.common import NLP_MODEL, SUBJECTIVITY_INDICATORS
 
@@ -538,10 +539,6 @@ class CrucibleFactAdder:
             "Fact must be saved to the DB before processing."
         )
 
-        assert fact.id is not None, (
-            "Fact must be saved to the DB before processing."
-        )
-
         pipeline: Pipeline[Fact] = Pipeline(
             "Crucible Fact Addition",
             [
@@ -581,11 +578,9 @@ class CrucibleFactAdder:
         # This query is a significant improvement over loading all facts.
         query = self.session.query(Fact).filter(
             Fact.id != new_fact.id,
-            Fact.disputed == False,  # noqa: E712
+            Fact.disputed.is_(False),
         )
         # Add a filter for each entity to find potential matches
-        from sqlalchemy import or_
-
         entity_filters = [
             Fact.content.ilike(f"%{entity}%") for entity in new_entities
         ]
